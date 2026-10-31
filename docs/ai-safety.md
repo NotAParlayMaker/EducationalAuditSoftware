@@ -35,7 +35,8 @@ by the provider's policies. `store: false` is not a zero-retention guarantee.
 Audit findings deliberately saved by a human persist in the local SQLite database.
 Default HTTP logs record request metadata, not request or response bodies.
 
-Before real school use, add authenticated roles, retention/deletion policy,
+Optional shared-token API access and browser boundary controls are documented in
+[the security model](security.md). Before real school use, add authenticated roles, retention/deletion policy,
 protected backups, review history, provider quotas, and deployment hardening.
 The audit lifecycle now records assignment, remediation, verification, closure,
 and reopening with transactional revision snapshots. History is append-only through
