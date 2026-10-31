@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 data/
 .venv/
+
+
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pem
