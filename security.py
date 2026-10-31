@@ -10,7 +10,7 @@ class RequestError(ValueError):
         super().__init__(message)
 
 
-def check_request(handler, write=False):
+def check_request(handler, write=False, authenticate=True):
     hosts = handler.headers.get_all('Host', [])
     allowed = {f'127.0.0.1:{handler.server.server_port}', f'localhost:{handler.server.server_port}'}
     if len(hosts) != 1 or hosts[0] not in allowed:
@@ -23,20 +23,20 @@ def check_request(handler, write=False):
     if write and handler.headers.get('X-Schooldesk-Request') != '1':
         raise RequestError(403, 'Required request header missing')
     token = os.environ.get('SCHOOL_ACCESS_TOKEN')
-    if token:
+    if token and authenticate:
         supplied = handler.headers.get('Authorization', '')
         if not hmac.compare_digest(supplied.encode(), ('Bearer ' + token).encode()):
             raise RequestError(401, 'Unlock this workspace with its access token.')
 
 
-def read_json(handler):
+def read_json(handler, maximum=8192):
     if handler.headers.get('Transfer-Encoding'):
         raise RequestError(400, 'Transfer encoding is unsupported')
     lengths = handler.headers.get_all('Content-Length', [])
-    if len(lengths) != 1 or len(lengths[0]) > 5 or not lengths[0].isascii() or not lengths[0].isdigit():
+    if len(lengths) != 1 or len(lengths[0]) > 6 or not lengths[0].isascii() or not lengths[0].isdigit():
         raise RequestError(400, 'Invalid request length')
     size = int(lengths[0])
-    if not 0 < size <= 8192:
+    if not 0 < size <= maximum:
         raise RequestError(413, 'Request exceeds size limit')
     if handler.headers.get_content_type() != 'application/json':
         raise RequestError(415, 'Use application/json')

@@ -7,35 +7,40 @@ const modules = {
  tickets: {title:'Support tickets', fields:['title','requester','priority','status'], description:'Keep school support requests and priorities visible.'}
 };
 const choices = {'attendance.status':['Present','Absent','Late'],'assets.status':['Available','In use','Repair'],'audits.status':['Draft','Open','In progress','Awaiting verification','Closed'],'audits.severity':['','Low','Medium','High','Critical'],'tickets.status':['Open','In progress','Resolved'],'tickets.priority':['Low','Medium','High']};
-let current = null, records = [], counts = {}, editingAudit = null;
+let current = null, records = [], counts = {}, editingAudit = null, pageOffset=0;
 const $ = id => document.getElementById(id);
 const label = name => name.charAt(0).toUpperCase()+name.slice(1);
-let workspaceToken = '';
+let workspaceToken = '', signedInUser = null;
 async function api(path, options = {}) { options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
 function cell(tag, text) { const element=document.createElement(tag); element.textContent=text; return element; }
 function drawRows() {
+ $('page-label').textContent='Page '+(pageOffset/50+1)+' · search filters this page';$('page-prev').disabled=pageOffset===0;$('page-next').disabled=records.length<50;
  $('rows').replaceChildren();
  const filtered=records.filter(row=>Object.values(row).join(' ').toLowerCase().includes($('search').value.toLowerCase()));
  for(const row of filtered) { const tr=document.createElement('tr'); for(const field of modules[current].fields) tr.append(cell('td',row[field] || ''));
- if(current === 'audits') { const td=document.createElement('td'); const edit=cell('button','Edit / transition');edit.type='button';edit.onclick=()=>editAudit(row);const history=cell('button','History');history.type='button';history.onclick=()=>auditHistory(row.id);td.append(edit,history);tr.append(td); }
+ if(current === 'audits') { const td=document.createElement('td'); const edit=cell('button','Edit / transition');edit.type='button';edit.onclick=()=>editAudit(row);const evidence=cell('button','Evidence');evidence.type='button';evidence.onclick=()=>auditEvidence(row);const history=cell('button','History');history.type='button';history.onclick=()=>auditHistory(row.id);td.append(edit,history,evidence);tr.append(td); }
  $('rows').append(tr); }
  if(!filtered.length) { const tr=document.createElement('tr'), td=cell('td',records.length?'No matching records.':'No records yet. Add your first record above.'); td.colSpan=modules[current].fields.length;tr.append(td);$('rows').append(tr); }
 }
 async function show(key) {
- current=key; editingAudit=null; $('audit-history')?.remove(); $('error').textContent='';
+ current=key; editingAudit=null; $('audit-history')?.remove(); $('evidence-panel')?.remove(); $('error').textContent='';
  document.querySelectorAll('nav button').forEach(button=>button.classList.toggle('active',button.dataset.key===(key||'')));
+ $('audit-filters').hidden=key!=='audits';
  $('overview').hidden=!!key; $('module').hidden=!key; $('breadcrumb').textContent=key?modules[key].title:'Overview';
  if(!key) { await dashboard();return; }
  const module=modules[key]; $('title').textContent=module.title;$('description').textContent=module.description;$('category').textContent=['students','attendance','grades'].includes(key)?'SCHOOL ADMINISTRATION':'IT OPERATIONS';$('message').textContent='';$('search').value='';$('form').replaceChildren();
- for(const field of module.fields) { const wrapper=cell('label',label(field)); const options=choices[key+'.'+field]; const input=document.createElement(options?'select':'input');input.name=field;input.required=key!=='audits'||['area','finding','actor'].includes(field);if(options) options.forEach(value=>{const option=cell('option',value);option.value=value;input.append(option);});else {input.type=['date','due_date'].includes(field)?'date':'text';input.maxLength=500;}wrapper.append(input);$('form').append(wrapper); }
+ for(const field of module.fields) { const wrapper=cell('label',label(field)); const options=choices[key+'.'+field]; const input=document.createElement(options?'select':'input');input.name=field;input.required=key!=='audits'||['area','finding','actor'].includes(field);if(key==='audits'&&field==='actor'&&signedInUser){input.value=signedInUser.username;input.readOnly=true;}if(options) options.forEach(value=>{const option=cell('option',value);option.value=value;input.append(option);});else {input.type=['date','due_date'].includes(field)?'date':'text';input.maxLength=500;}wrapper.append(input);$('form').append(wrapper); }
  const submit=cell('button','Save record');submit.type='submit';$('form').append(submit);
+ const canCreate=!signedInUser||signedInUser.role==='administrator'||(key==='audits'&&signedInUser.role==='auditor');
+ $('form').hidden=!canCreate;
+ if(!canCreate)$('message').textContent=key==='audits'?'Choose Edit / transition on a finding assigned to you.':'This role has read-only access to these records.';
  const tr=document.createElement('tr');module.fields.forEach(field=>tr.append(cell('th',label(field))));if(key==='audits')tr.append(cell('th','Actions'));$('head').replaceChildren(tr);$('rows').replaceChildren();
- try { const result=await api(key); if(current===key){records=result;drawRows();} }catch(error){$('error').textContent=error.message;}
+ try { const result=await api(listPath(key)); if(current===key){records=result;drawRows();} }catch(error){$('error').textContent=error.message;}
 }
 async function dashboard() {
- try {const results=await Promise.all(Object.keys(modules).map(async key=>[key,(await api(key)).length]));counts=Object.fromEntries(results);$('cards').replaceChildren();for(const [key,module] of Object.entries(modules)){const button=document.createElement('button');button.className='card';button.append(cell('div',module.title),cell('strong',counts[key]),cell('span','View records →'));button.onclick=()=>show(key);$('cards').append(button);}}catch(error){$('error').textContent=error.message;}
+ try {const visibleKeys=Object.keys(modules).filter(key=>!signedInUser||signedInUser.role==='administrator'||!['students','attendance','grades'].includes(key));counts=await api('summary');$('cards').replaceChildren();for(const key of visibleKeys){const module=modules[key];const button=document.createElement('button');button.className='card';button.append(cell('div',module.title),cell('strong',counts[key]),cell('span','View records →'));button.onclick=()=>{pageOffset=0;show(key);};$('cards').append(button);}if(visibleKeys.includes('audits')){const card=cell('div','Overdue findings');card.className='card';card.append(cell('strong',counts.overdue_audits),cell('p','Active severity: '+Object.entries(counts.audit_severity).map(([severity,total])=>(severity||'Unspecified')+' '+total).join(' · ')));$('cards').append(card);}}catch(error){$('error').textContent=error.message;}
 }
-for(const [key,title] of [['','Overview'],...Object.entries(modules).map(([key,m])=>[key,m.title])]){const button=cell('button',title);button.dataset.key=key;button.onclick=()=>show(key||null);$('nav').append(button);}
+for(const [key,title] of [['','Overview'],...Object.entries(modules).map(([key,m])=>[key,m.title])]){const button=cell('button',title);button.dataset.key=key;button.onclick=()=>{pageOffset=0;show(key||null);};$('nav').append(button);}
 $('search').oninput=drawRows;
 $('form').onsubmit=async event=>{event.preventDefault();const key=current;const data=Object.fromEntries(new FormData(event.target));const editing=key==='audits'?editingAudit:null;if(editing)data.revision=editing.revision;const button=event.target.querySelector('button');button.disabled=true;try{await api(editing?key+'/'+editing.id:key,{method:editing?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});if(current===key){await show(key);$('message').textContent='Record saved.';}}catch(error){$('error').textContent=error.message;}finally{button.disabled=false;}};
 show(null);
@@ -85,8 +90,13 @@ async function editAudit(row) {
  await show('audits');
  if(current !== 'audits') return;
  editingAudit = {id:row.id, revision:row.revision};
+ $('form').hidden=false;
  for(const field of modules.audits.fields) $('form').elements.namedItem(field).value = row[field] || '';
- $('form').elements.namedItem('actor').value = '';
+ $('form').elements.namedItem('actor').value = signedInUser?signedInUser.username:'';
+ if(signedInUser&&['remediation_owner','reviewer'].includes(signedInUser.role)){
+ const writable=signedInUser.role==='reviewer'?['status','verification','closure_reason']:['status','remediation','evidence'];
+ for(const field of modules.audits.fields){const input=$('form').elements.namedItem(field);if(field==='actor')continue;if(!writable.includes(field)){if(input.tagName==='SELECT')input.disabled=true;else input.readOnly=true;}}
+ }
  const allowed = {'Draft':['Draft','Open'],'Open':['Open','In progress'],'In progress':['In progress','Awaiting verification'],'Awaiting verification':['Awaiting verification','In progress','Closed'],'Closed':['Open']};
  const status=$('form').elements.namedItem('status');
  status.replaceChildren(...allowed[row.status].map(value=>{const option=cell('option',value);option.value=value;return option;}));
@@ -94,14 +104,14 @@ async function editAudit(row) {
  $('message').textContent='Editing audit #'+row.id+' · revision '+row.revision+'. Enter the person making this change. Closed findings require a reopen reason.';
  $('module').scrollIntoView({behavior:'smooth'});
 }
-async function auditHistory(id) {
+async function auditHistory(id, historyOffset=0) {
  try {
- const events=await api('audits/'+id+'/history');
+ const events=await api('audits/'+id+'/history?limit=100&offset='+historyOffset);
  if(current !== 'audits') return;
- $('audit-history')?.remove();
+ $('audit-history')?.remove(); $('evidence-panel')?.remove();
  const panel=document.createElement('div');panel.id='audit-history';panel.className='panel';panel.append(cell('h2','History · audit #'+id));
  for(const event of events) { const details=document.createElement('details'); details.append(cell('summary','Revision '+event.revision+' · '+event.actor+' · '+event.recorded_at));const dl=document.createElement('dl');for(const [key,value] of Object.entries(event.snapshot)){dl.append(cell('dt',label(key.replaceAll('_',' '))),cell('dd',String(value)));}details.append(dl);panel.append(details); }
- $('module').append(panel);panel.scrollIntoView({behavior:'smooth'});
+ const previous=cell('button','Previous history page');previous.type='button';previous.disabled=historyOffset===0;previous.onclick=()=>auditHistory(id,Math.max(0,historyOffset-100));const next=cell('button','Next history page');next.type='button';next.disabled=events.length<100;next.onclick=()=>auditHistory(id,historyOffset+100);panel.append(previous,next);$('module').append(panel);panel.scrollIntoView({behavior:'smooth'});
  } catch(error){$('error').textContent=error.message;}
 }
 
@@ -110,4 +120,55 @@ $('unlock-form').onsubmit = async event => {
  try { await api('audits'); $('unlock-status').textContent='Workspace unlocked for this tab.'; await show(null); }
  catch(error){workspaceToken='';$('unlock-status').textContent=error.message;}
 };
-$('lock-workspace').onclick = () => { workspaceToken=''; location.reload(); };
+$('lock-workspace').onclick = async () => { try { await api('auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); } catch(error) {} workspaceToken=''; location.reload(); };
+
+$('login-form').onsubmit = async event => {
+ event.preventDefault(); const button=event.target.querySelector('button');button.disabled=true;
+ const username=$('login-username').value, password=$('login-password').value;$('login-password').value='';
+ try {
+ const result=await api('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+ workspaceToken=result.token;signedInUser=result.user;
+ $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
+ $('unlock-form').hidden=true;$('login-form').hidden=true;
+ // Keep logout reachable after hiding the legacy-token form.
+ $('lock-workspace').hidden=false;$('identity').after($('lock-workspace'));
+ document.querySelectorAll('nav button').forEach(button=>{button.hidden=signedInUser.role!=='administrator'&&['students','attendance','grades'].includes(button.dataset.key);});
+ await show(null);
+ }catch(error){$('identity').textContent=error.message;}
+ finally{button.disabled=false;}
+};
+
+api('auth/status').then(status=>{
+ if(status.accounts_enabled){$('unlock-form').hidden=true;$('identity').textContent='Sign in with an individual account. Legacy workspace tokens do not grant access.';}
+ else {$('login-form').hidden=true;}
+}).catch(error=>{$('identity').textContent=error.message;});
+
+function listPath(key) {
+ const params=new URLSearchParams({limit:'50',offset:String(pageOffset)});
+ if(key==='audits'){
+  for(const field of ['owner','severity','status']){const value=$('filter-'+field).value;if(value)params.set(field,value);}
+  if($('filter-overdue').checked)params.set('overdue','1');
+ }
+ return key+'?'+params;
+}
+$('filter-form').onsubmit=event=>{event.preventDefault();pageOffset=0;show('audits');};
+$('page-prev').onclick=()=>{pageOffset=Math.max(0,pageOffset-50);show(current);};
+$('page-next').onclick=()=>{pageOffset+=50;show(current);};
+async function auditEvidence(row) {
+ try {
+ const items=await api('audits/'+row.id+'/evidence?limit=100');
+ if(current!=='audits')return;
+ $('evidence-panel')?.remove();const panel=document.createElement('div');panel.id='evidence-panel';panel.className='panel';panel.append(cell('h2','Evidence · audit #'+row.id));
+ panel.append(cell('p','Attachments are untrusted. Only fictional UTF-8 text or PDF files up to 256 KiB are accepted; files are downloaded, never embedded. Maximum 20 per finding.'));
+ for(const item of items){const description=cell('p',item.filename+' · '+item.size+' bytes · SHA-256 '+item.sha256+' · uploaded by '+item.actor);const download=cell('button','Download');download.type='button';download.onclick=async()=>{
+  try {const headers={};if(workspaceToken)headers.Authorization='Bearer '+workspaceToken;const response=await fetch('/api/evidence/'+item.id,{headers});if(!response.ok)throw new Error('Download denied or integrity check failed.');const blob=await response.blob();const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='evidence-'+item.id+(item.media_type==='application/pdf'?'.pdf':'.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){$('error').textContent=error.message;}
+ };panel.append(description,download);}
+ if(signedInUser&&row.status!=='Closed'){
+ const form=document.createElement('form');const label=cell('label','Evidence file');const file=document.createElement('input');file.type='file';file.accept='.txt,.pdf';file.required=true;label.append(file);const submit=cell('button','Upload evidence');submit.type='submit';form.append(label,submit);const status=cell('p','');status.setAttribute('role','status');
+ form.onsubmit=async event=>{event.preventDefault();const selected=file.files[0];if(!selected||selected.size>262144){status.textContent='Choose a file of at most 256 KiB.';return;}submit.disabled=true;
+ try {const bytes=new Uint8Array(await selected.arrayBuffer());let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);await api('audits/'+row.id+'/evidence',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:selected.name,content_base64:btoa(binary)})});await show('audits');await auditEvidence(row);}catch(error){status.textContent=error.message;}finally{submit.disabled=false;}};
+ panel.append(form,status);
+ }
+ $('module').append(panel);panel.scrollIntoView({behavior:'smooth'});
+ }catch(error){$('error').textContent=error.message;}
+}

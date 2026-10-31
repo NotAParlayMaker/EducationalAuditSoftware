@@ -24,7 +24,7 @@ Protect the machine, application source, parent directories, database, and backu
 Changing the variable and restarting rotates the token. Locking the browser tab
 clears its in-memory state; it does not revoke a copied token at the server.
 
-Token access is one shared workspace gate, not individual authentication. An owner
+For databases without provisioned accounts, token access is one shared workspace gate, not individual authentication. An owner
 and reviewer typed into forms can still impersonate one another. All token holders
 have the same API access. Same-origin script compromise or malicious browser
 extensions can act with the user's access. Local processes can reach the service,
@@ -33,9 +33,9 @@ retained; never expose this plain-HTTP prototype publicly.
 
 ## Remaining risks and next work
 
-- Individual accounts, authenticated reviewer identities, roles, and authorization.
-- Request/AI quotas, connection concurrency limits, and broader denial-of-service defense.
-- Pagination for record/history reads, encrypted storage, backup restore testing,
+- Account mode now provides individual accounts, authenticated actors, roles, and reviewer checks. MFA, per-school isolation, and self-service recovery remain future work.
+- Login throttling is implemented. AI request budgets and a two-call concurrency cap are implemented. General connection concurrency limits and broader denial-of-service defense remain future work.
+- Pagination and backup/restore testing are implemented. Encrypted storage,
   retention/deletion policy, and protected security-event logging.
 - Managed HTTPS deployment, session lifecycle, and security monitoring before any
   future network service. SQLite history is not tamper-proof against filesystem access.
@@ -49,3 +49,26 @@ and acceptance, cross-site requests, missing custom headers, content types, body
 limits, malformed/duplicate JSON, unknown file paths, headers, generic storage
 errors, invalid identifiers, database permissions, and secret-free request logging.
 Browser interaction and a full penetration test are not covered by this suite.
+
+
+## Account mode
+
+After local administrator provisioning, every protected API route requires a valid
+account session; the shared token is ignored. Passwords are salted PBKDF2 hashes,
+sessions are stored as SHA-256 token digests, and expiry and active-account checks
+run on every request. The public auth status endpoint exposes only whether account
+mode is enabled. Sign-in retains the same browser/JSON request controls and a
+persistent ten-attempt-per-minute global budget. Account names and roles are
+available to signed-in users for assignment; password material is never exposed.
+
+The authenticated username overrides client-supplied audit actor values. Server-side
+permissions separate student administration, audit assignment, assigned remediation,
+and assigned independent closure. Role checks apply to direct API calls, not just
+navigation. Reviewer identity must already be assigned before closure. History
+from demo mode is not retroactively authenticated. Account provisioning and resets
+require trusted filesystem/terminal access; no network account administration exists.
+
+Read permissions currently expose all IT records to all account roles. This is not
+tenant isolation. The deployment remains loopback HTTP with synthetic data only.
+
+Evidence, quota, backup, and retention controls are described in [operations](operations.md). File signature checks are not malware scanning; backups require protected storage.
