@@ -10,7 +10,8 @@ const choices = {'attendance.status':['Present','Absent','Late'],'assets.status'
 let current = null, records = [], counts = {}, editingAudit = null;
 const $ = id => document.getElementById(id);
 const label = name => name.charAt(0).toUpperCase()+name.slice(1);
-async function api(path, options) { const response = await fetch('/api/'+path, options); const data = await response.json(); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
+let workspaceToken = '';
+async function api(path, options = {}) { options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
 function cell(tag, text) { const element=document.createElement(tag); element.textContent=text; return element; }
 function drawRows() {
  $('rows').replaceChildren();
@@ -103,3 +104,10 @@ async function auditHistory(id) {
  $('module').append(panel);panel.scrollIntoView({behavior:'smooth'});
  } catch(error){$('error').textContent=error.message;}
 }
+
+$('unlock-form').onsubmit = async event => {
+ event.preventDefault(); workspaceToken=$('workspace-token').value; $('workspace-token').value='';
+ try { await api('audits'); $('unlock-status').textContent='Workspace unlocked for this tab.'; await show(null); }
+ catch(error){workspaceToken='';$('unlock-status').textContent=error.message;}
+};
+$('lock-workspace').onclick = () => { workspaceToken=''; location.reload(); };
