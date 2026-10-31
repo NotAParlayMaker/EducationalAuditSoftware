@@ -40,7 +40,7 @@ class WorkflowTest(unittest.TestCase):
         }
         for resource, data in examples.items():
             with self.subTest(resource=resource):
-                request = Request(self.base + '/api/' + resource, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json'})
+                request = Request(self.base + '/api/' + resource, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json', 'X-Schooldesk-Request':'1'})
                 with urlopen(request) as response:
                     self.assertEqual(response.status, 201)
                     saved = json.load(response)
@@ -49,7 +49,7 @@ class WorkflowTest(unittest.TestCase):
                     self.assertIn(saved, json.load(response))
 
     def test_invalid_record_rejected(self):
-        request = Request(self.base + '/api/students', data=b'{}')
+        request = Request(self.base + '/api/students', data=b'{}', headers={'Content-Type':'application/json','X-Schooldesk-Request':'1'})
         with self.assertRaises(HTTPError) as caught:
             urlopen(request)
         self.assertEqual(caught.exception.code, 400)

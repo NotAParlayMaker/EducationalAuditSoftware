@@ -1,0 +1,16 @@
+name: Offline checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Run offline regression and security tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check Python and JavaScript syntax
+        run: |
+          python3 -m compileall -q app.py assistant.py audit_workflow.py security.py tests
+          node --check static/app.js
