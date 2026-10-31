@@ -35,7 +35,7 @@ class WorkflowTest(unittest.TestCase):
             'attendance': {'student': 'Demo Student', 'date': '2026-10-31', 'status': 'Present'},
             'grades': {'student': 'Demo Student', 'subject': 'Math', 'grade': 'A'},
             'assets': {'tag': 'DEMO-001', 'device': 'Laptop', 'location': 'Library', 'status': 'Available'},
-            'audits': {'area': 'Library', 'finding': 'Review updates', 'status': 'Open'},
+            'audits': {'area': 'Library', 'finding': 'Review updates', 'status': 'Draft', 'actor': 'Demo Auditor'},
             'tickets': {'title': 'Projector check', 'requester': 'Demo Teacher', 'priority': 'Low', 'status': 'Open'},
         }
         for resource, data in examples.items():
@@ -67,3 +67,4 @@ class WorkflowTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

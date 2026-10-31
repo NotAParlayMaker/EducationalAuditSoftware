@@ -7,7 +7,7 @@ Status: local prototype. Use synthetic notes only.
 A user enters a fictional IT concern, selects whether external processing is
 permitted, requests a suggestion, reviews the draft, and copies selected fields
 into an editable audit form. Only the existing Save record action writes the
-finding. New audit drafts start Open. Editing the source note discards its draft;
+finding. New AI audit drafts start Draft. Editing the source note discards its draft;
 responses for changed input are discarded. No automated closure or execution exists.
 
 The browser, local server, SQLite store, and optional provider are separate trust
@@ -25,7 +25,7 @@ Provider output is untrusted data. Valid output is still an unverified suggestio
 | Credential leakage | Server environment only; generic provider errors | Operator must secure the host and environment |
 | Browser attacks on localhost | Exact Host allowlist and same-origin POST checks | Not authentication; malicious local processes remain a risk |
 | Provider outage or oversized output | Timeout, bounded read, validation, no automatic retries | Provider calls may incur cost; rate limits and quotas are future work |
-| False audit closure | Only draft area/finding copied; status starts Open | Existing manual records remain editable only through future workflow work |
+| False audit closure | Only draft area/finding copied; status starts Open | Manual transitions enforce evidence and reviewer fields; names are self-reported |
 
 ## Data lifecycle and next work
 
@@ -37,9 +37,10 @@ Default HTTP logs record request metadata, not request or response bodies.
 
 Before real school use, add authenticated roles, retention/deletion policy,
 protected backups, review history, provider quotas, and deployment hardening.
-A future audit workflow should distinguish assignment, remediation, independent
-verification, closure, and reopening, with immutable revision history. This change
-does not implement or claim that workflow or regulatory compliance.
+The audit lifecycle now records assignment, remediation, verification, closure,
+and reopening with transactional revision snapshots. History is append-only through
+the API but is not tamper-proof. Reviewer identities remain self-reported; this is
+not authenticated independent review or a claim of regulatory compliance.
 
 ## Verification
 

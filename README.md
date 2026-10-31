@@ -26,7 +26,7 @@ automatically under `data/`. Stop the server with Ctrl+C.
 
 The initial database is empty. Use fictional records to explore the app.
 Student names in attendance and grades are free text; relational enrollment,
-editing, deletion, grade calculations, and audit history are future work.
+student editing, deletion, and grade calculations are future work. Audit findings support editing and revision history.
 
 ## Validation
 
@@ -81,3 +81,33 @@ Provider responses are size-bounded, validated against exact fields, and display
 as text. Timeouts and invalid responses leave records unchanged. Credentials and
 raw provider errors are never returned to the browser. Existing unauthenticated
 local-prototype limitations still apply; do not expose this service publicly.
+
+## Audit lifecycle
+
+Audits now support **Draft → Open → In progress → Awaiting verification → Closed**.
+A reviewer can return a finding to In progress; closed findings can be reopened to
+Open with a reason. Use **Edit / transition** on a row, choose the next status, and
+save the revision. Use **History** to inspect timestamped snapshots and actors.
+
+- Draft: area, finding, and change actor are required.
+- Open: also requires owner, severity, and an ISO due date.
+- In progress: requires a remediation plan.
+- Awaiting verification: requires evidence text/reference and a reviewer different
+  from the owner. Evidence is a reference or description, not an uploaded file.
+- Closed: requires verification notes, a closure reason, and the reviewer as actor.
+- Reopened: requires a reopen reason; current closure/verification notes are cleared,
+  while previous snapshots remain available in history.
+
+Updates use revision numbers and return HTTP 409 for stale saves. Record updates
+and their history entries commit atomically. History is append-only through the
+application API, not tamper-proof against someone with database access. Actors are
+self-reported; separate names do not prove independent authenticated review.
+
+Startup migrates existing databases in place without removing findings. Legacy
+Resolved findings become Awaiting verification because prior verification evidence
+was not recorded. Legacy Open/In progress rows retain their status and must satisfy
+the new required fields when next saved. Migration records a baseline history event,
+not reconstructed historical activity. Back up your SQLite file before upgrading.
+
+The AI assistant remains unable to save or close findings. AI drafts enter the
+form in Draft status. Evidence, recommendations, and decisions require human review.
