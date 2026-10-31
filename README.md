@@ -223,3 +223,24 @@ See [operations and retention](docs/operations.md) for limits, commands, schedul
 and remaining restrictions. Backup scheduling requires configuring your host's task
 scheduler; no schedule is installed automatically. Live-record deletion and a
 school-approved retention policy remain required before handling real school data.
+
+## Session controls and security activity
+
+Signed-in users can review their own active sessions, revoke one session, or sign
+out all sessions. Session lists expose public identifiers and times, never bearer
+tokens or stored token digests. At most ten sessions per account are retained after
+a successful login; oldest sessions are evicted. The current session is marked in
+the interface. Cross-account session revocation is rejected by the server.
+
+Password changes require the current password and a different new password of
+14–256 characters. Success revokes every session and requires a new sign-in.
+Password-change attempts are limited to five per account per fifteen minutes.
+Passwords are cleared from form fields after submission. Reset/disable races are
+rechecked before a successful login can issue a session.
+
+Administrators can review paginated security activity and check its event chain.
+Only fixed event codes, UTC timestamps, and validated account handles are stored;
+unknown failed-login names, passwords, tokens, student data, request paths, and
+record contents are excluded. The chain detects internal edits/reordering, but
+requires an independently saved checkpoint to detect tail truncation or a full
+rewrite. See [security activity and checkpoints](docs/security-activity.md).

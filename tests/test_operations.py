@@ -94,7 +94,7 @@ class BackupRestoreTest(unittest.TestCase):
             app.initialize()
             with app.connect() as db:
                 db.execute("INSERT INTO students(name,year,guardian) VALUES('Fictional student','8','Fictional guardian')")
-                db.execute("INSERT INTO sessions VALUES('hash','fictional',9999999999)")
+                db.execute("INSERT INTO sessions(token_hash,username,expires,public_id,created_at) VALUES('hash','fictional',9999999999,'fixture-public-id',1)")
             backup=Path(directory)/'backup.db';restored=Path(directory)/'restored.db'
             maintenance.copy_database(app.DB,backup)
             maintenance.copy_database(backup,restored)

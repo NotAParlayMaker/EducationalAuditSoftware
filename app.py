@@ -4,6 +4,7 @@ import os
 import sqlite3
 import security
 import accounts
+import security_events as events
 import operations
 from urllib.parse import urlsplit, parse_qs
 import hashlib
@@ -156,6 +157,19 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply(200, {'accounts_enabled': accounts.enabled(db)})
         if not self.guard():
             return
+        if self.path == '/api/auth/sessions':
+            with connect() as db:
+                return self.reply(200,accounts.session_list(db,self.user,self.headers.get('Authorization','')))
+        if self.path.split('?')[0] in ('/api/security/events','/api/security/verify'):
+            if not self.user or self.user['role']!='administrator':
+                raise security.RequestError(403,'Only administrators can review security events.')
+            with connect() as db:
+                if self.path.split('?')[0]=='/api/security/verify':
+                    return self.reply(200,events.verify(db))
+                query=parse_qs(urlsplit(self.path).query,max_num_fields=4)
+                limit,offset=operations.page_query(query)
+                rows=[dict(row) for row in db.execute('SELECT * FROM security_events ORDER BY id DESC LIMIT ? OFFSET ?',(limit,offset))]
+            return self.reply(200,rows)
         if self.path == '/api/auth/me':
             return self.reply(200, {'user': self.user})
         if self.path == '/api/summary':
@@ -214,6 +228,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(200, result)
         if not self.guard(write=True):
             return
+        if self.path in ('/api/auth/revoke-session','/api/auth/revoke-all','/api/auth/change-password'):
+            data=security.read_json(self)
+            with connect() as db:
+                if self.path=='/api/auth/revoke-session':
+                    if set(data)!={'session_id'}:raise security.RequestError(400,'Supply a session identifier.')
+                    accounts.revoke_sessions(db,self.user,data['session_id'])
+                elif self.path=='/api/auth/revoke-all':
+                    if data:raise security.RequestError(400,'Unexpected fields.')
+                    accounts.revoke_sessions(db,self.user)
+                else:
+                    accounts.change_password(db,self.user,data)
+            return self.reply(200,{'completed':True})
         parts = self.path.strip('/').split('/')
         if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
             data=security.read_json(self,maximum=360000)
@@ -227,6 +253,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/auth/logout':
             with connect() as db:
                 db.execute('DELETE FROM sessions WHERE token_hash=?', (accounts.digest(self.headers.get('Authorization', '').removeprefix('Bearer ')),))
+                if self.user:events.append(db,'session_revoked',actor=self.user['username'])
             return self.reply(200, {'logged_out': True})
         is_assistant = self.path == '/api/assistant/draft'
         resource = self.resource()

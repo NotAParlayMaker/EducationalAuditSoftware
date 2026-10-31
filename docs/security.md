@@ -72,3 +72,12 @@ Read permissions currently expose all IT records to all account roles. This is n
 tenant isolation. The deployment remains loopback HTTP with synthetic data only.
 
 Evidence, quota, backup, and retention controls are described in [operations](operations.md). File signature checks are not malware scanning; backups require protected storage.
+
+## Security activity and session response
+
+Account security now includes own-session inspection/revocation, all-session
+sign-out, current-password-verified password changes, and administrator-only event
+review. [Security activity and checkpoints](security-activity.md) documents the
+bounded metadata, hash-chain verification, independent checkpoint requirement,
+retention, and incident-response limitations. General HTTP logs remain disabled;
+these typed events do not capture raw request or school-record content.

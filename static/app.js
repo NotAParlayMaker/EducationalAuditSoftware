@@ -10,8 +10,8 @@ const choices = {'attendance.status':['Present','Absent','Late'],'assets.status'
 let current = null, records = [], counts = {}, editingAudit = null, pageOffset=0;
 const $ = id => document.getElementById(id);
 const label = name => name.charAt(0).toUpperCase()+name.slice(1);
-let workspaceToken = '', signedInUser = null;
-async function api(path, options = {}) { options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
+let workspaceToken = '', signedInUser = null, sessionGeneration=0;
+async function api(path, options = {}) { const generation=sessionGeneration; options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(generation!==sessionGeneration)throw new Error('Session changed. Request discarded.'); if(response.status===401&&signedInUser&&!['auth/login','auth/change-password'].includes(path))signedOut('Session expired or revoked. Sign in again.'); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
 function cell(tag, text) { const element=document.createElement(tag); element.textContent=text; return element; }
 function drawRows() {
  $('page-label').textContent='Page '+(pageOffset/50+1)+' · search filters this page';$('page-prev').disabled=pageOffset===0;$('page-next').disabled=records.length<50;
@@ -127,7 +127,7 @@ $('login-form').onsubmit = async event => {
  const username=$('login-username').value, password=$('login-password').value;$('login-password').value='';
  try {
  const result=await api('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
- workspaceToken=result.token;signedInUser=result.user;
+ workspaceToken=result.token;signedInUser=result.user;sessionGeneration++;$('security-panel').hidden=false;$('security-admin').hidden=signedInUser.role!=='administrator';$('security-message').textContent='';
  $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
  $('unlock-form').hidden=true;$('login-form').hidden=true;
  // Keep logout reachable after hiding the legacy-token form.
@@ -172,3 +172,44 @@ async function auditEvidence(row) {
  $('module').append(panel);panel.scrollIntoView({behavior:'smooth'});
  }catch(error){$('error').textContent=error.message;}
 }
+
+function signedOut(message) {
+ workspaceToken='';signedInUser=null;sessionGeneration++;
+ $('security-panel').hidden=true;$('module').hidden=true;$('overview').hidden=true;
+ $('cards').replaceChildren();$('rows').replaceChildren();$('sessions-list').replaceChildren();$('security-events').replaceChildren();
+ $('evidence-panel')?.remove();$('audit-history')?.remove();
+ $('login-form').hidden=false;$('identity').textContent=message;
+ for(const id of ['current-password','new-password','confirm-password','login-password'])$(id).value='';
+ clearDraft();$('assistant-note').value='';
+}
+$('sessions-show').onclick=async()=>{
+ try {
+ const sessions=await api('auth/sessions');$('sessions-list').replaceChildren();
+ for(const session of sessions){const row=document.createElement('p');row.append(cell('span',(session.current?'This session':'Other session')+' · created '+new Date(session.created_at*1000).toLocaleString()+' · expires '+new Date(session.expires_at*1000).toLocaleString()+' '));const revoke=cell('button','Revoke session');revoke.type='button';revoke.onclick=async()=>{
+ try{await api('auth/revoke-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:session.id})});if(session.current)signedOut('Session revoked. Sign in again.');else $('sessions-show').click();}catch(error){$('security-message').textContent=error.message;}
+ };row.append(revoke);$('sessions-list').append(row);}
+ }catch(error){$('security-message').textContent=error.message;}
+};
+$('sessions-revoke-all').onclick=async()=>{
+ try{await api('auth/revoke-all',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});signedOut('All your sessions were revoked. Sign in again.');}catch(error){$('security-message').textContent=error.message;}
+};
+$('password-form').onsubmit=async event=>{
+ event.preventDefault();const current=$('current-password').value,next=$('new-password').value,confirmation=$('confirm-password').value;
+ for(const id of ['current-password','new-password','confirm-password'])$(id).value='';
+ if(next!==confirmation){$('security-message').textContent='New passwords do not match.';return;}
+ const button=event.target.querySelector('button');button.disabled=true;
+ try{await api('auth/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:current,new_password:next})});signedOut('Password changed and all sessions revoked. Sign in with your new password.');}
+ catch(error){$('security-message').textContent=error.message;}
+ finally{button.disabled=false;}
+};
+async function showSecurityEvents(offset=0){
+ try{const events=await api('security/events?limit=50&offset='+offset);const container=$('security-events');container.replaceChildren();
+ for(const event of events)container.append(cell('p','#'+event.id+' · '+event.occurred_at+' · '+event.event+' · actor: '+(event.actor||'not recorded')+' · target: '+(event.target||'none')));
+ const previous=cell('button','Previous events');previous.disabled=offset===0;previous.onclick=()=>showSecurityEvents(Math.max(0,offset-50));const next=cell('button','Next events');next.disabled=events.length<50;next.onclick=()=>showSecurityEvents(offset+50);container.append(previous,next);
+ }catch(error){$('security-message').textContent=error.message;}
+}
+$('security-events-show').onclick=()=>showSecurityEvents();
+$('security-verify').onclick=async()=>{
+ try{const result=await api('security/verify');$('security-verify-status').textContent=result.valid?'Chain internally consistent · '+result.count+' events · head '+result.head+'. Compare an independently saved checkpoint to detect truncation or full rewrites.':'Security event chain verification failed. Preserve the database for investigation.';}
+ catch(error){$('security-verify-status').textContent=error.message;}
+};
