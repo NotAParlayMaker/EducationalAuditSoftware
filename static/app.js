@@ -36,3 +36,44 @@ for(const [key,title] of [['','Overview'],...Object.entries(modules).map(([key,m
 $('search').oninput=drawRows;
 $('form').onsubmit=async event=>{event.preventDefault();const key=current;const data=Object.fromEntries(new FormData(event.target));const button=event.target.querySelector('button');button.disabled=true;try{await api(key,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});if(current===key){await show(key);$('message').textContent='Record saved.';}}catch(error){$('error').textContent=error.message;}finally{button.disabled=false;}};
 show(null);
+
+
+// Drafts are transient and rendered as text, never trusted HTML.
+let assistantDraft = null;
+function clearDraft() {
+ assistantDraft = null;
+ $('assistant-result').hidden = true;
+ $('assistant-details').replaceChildren();
+}
+$('assistant-note').oninput = () => { clearDraft(); $('assistant-status').textContent = ''; };
+$('assistant-external').onchange = clearDraft;
+$('assistant-discard').onclick = () => { clearDraft(); $('assistant-note').value = ''; $('assistant-status').textContent = 'Draft discarded.'; };
+$('assistant-form').onsubmit = async event => {
+ event.preventDefault(); clearDraft();
+ const button = event.target.querySelector('button');
+ const note = $('assistant-note').value;
+ const allowExternal = $('assistant-external').checked;
+ button.disabled = true; $('assistant-status').textContent = 'Preparing draft…';
+ try {
+  const result = await api('assistant/draft', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({note, allow_external:allowExternal})});
+  if ($('assistant-note').value !== note || $('assistant-external').checked !== allowExternal) {
+   $('assistant-status').textContent = 'Input changed. Prepare a new draft.'; return;
+  }
+  assistantDraft = result.draft;
+  for (const [key, value] of Object.entries(assistantDraft)) $('assistant-details').append(cell('dt', label(key.replaceAll('_', ' '))), cell('dd', value));
+  $('assistant-result').hidden = false;
+  $('assistant-status').textContent = result.mode === 'offline' ? 'Offline template ready. No external request was made.' : 'AI draft ready for your review.';
+ } catch(error) { $('assistant-status').textContent = error.message; }
+ finally { button.disabled = false; }
+};
+$('assistant-use').onclick = async () => {
+ if (!assistantDraft) return;
+ const draft = assistantDraft;
+ await show('audits');
+ if (current !== 'audits') return;
+ for (const field of ['area', 'finding']) $('form').elements.namedItem(field).value = draft[field];
+ $('form').elements.namedItem('status').value = 'Open';
+ $('message').textContent = 'Draft copied. Review and edit, then choose Save record. Recommendations remain suggestions and are not saved.';
+ $('module').scrollIntoView({behavior:'smooth'});
+ clearDraft();
+};
