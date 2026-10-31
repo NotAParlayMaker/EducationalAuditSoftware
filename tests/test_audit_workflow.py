@@ -95,10 +95,10 @@ class AuditHTTPTest(unittest.TestCase):
             thread.start()
             try:
                 base = f'http://127.0.0.1:{server.server_port}/api/audits'
-                request = Request(base, data=json.dumps({'area':'Demo','finding':'Demo finding','actor':'Auditor'}).encode())
+                request = Request(base, data=json.dumps({'area':'Demo','finding':'Demo finding','actor':'Auditor'}).encode(), headers={'Content-Type':'application/json','X-Schooldesk-Request':'1'})
                 with urlopen(request) as response:
                     record=json.load(response)
-                request = Request(base+'/'+str(record['id']), method='PUT', data=json.dumps({'revision':1,'actor':'Auditor','finding':'Corrected'}).encode())
+                request = Request(base+'/'+str(record['id']), method='PUT', data=json.dumps({'revision':1,'actor':'Auditor','finding':'Corrected'}).encode(), headers={'Content-Type':'application/json','X-Schooldesk-Request':'1'})
                 with urlopen(request) as response:
                     self.assertEqual(json.load(response)['revision'],2)
                 with self.assertRaises(HTTPError) as caught:
