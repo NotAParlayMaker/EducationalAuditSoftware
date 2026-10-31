@@ -9,19 +9,25 @@ from pathlib import Path
 import sqlite3
 
 import app
+import json
+import security_events as events
 
 
 def readonly(path):
-    return sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)
+    db=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)
+    db.row_factory=sqlite3.Row
+    return db
 
 
 def verify(path):
     with readonly(path) as db:
-        if db.execute('PRAGMA quick_check').fetchall()!=[('ok',)]:
+        if [row[0] for row in db.execute('PRAGMA quick_check')]!=['ok']:
             raise ValueError('Database integrity check failed.')
         tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not {'audits','audit_history','students','users','account_settings'}<=tables:
             raise ValueError('Not a current Schooldesk database.')
+        if 'security_events' in tables and not events.verify(db)['valid']:
+            raise ValueError('Security event chain is inconsistent.')
 
 
 def copy_database(source,destination):
@@ -59,13 +65,33 @@ def prune_backups(directory, days, apply=False, now=None):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['backup','verify','restore','snapshot','prune-backups'])
-    parser.add_argument('file',help='backup destination, or backup source for verify/restore')
+    parser.add_argument('command',choices=['backup','verify','restore','snapshot','prune-backups','security-checkpoint','security-verify'])
+    parser.add_argument('file',nargs='?',help='backup destination, or backup source for verify/restore')
     parser.add_argument('--destination',help='new database path for restore; never overwrite the running database')
     parser.add_argument('--older-than-days',type=int,default=30,help='backup retention age; default 30 days')
+    parser.add_argument('--checkpoint',help='previous trusted checkpoint JSON for security-verify')
     parser.add_argument('--apply',action='store_true',help='actually remove expired generated backups; otherwise preview')
     args=parser.parse_args()
+    if args.command!='security-verify' and not args.file:
+        parser.error('A destination or directory is required.')
     try:
+        if args.command in ('security-checkpoint','security-verify'):
+            with app.connect() as db:
+                checkpoint=None
+                if args.checkpoint:
+                    raw=Path(args.checkpoint).read_bytes()
+                    if len(raw)>1024:raise ValueError('Checkpoint too large.')
+                    checkpoint=json.loads(raw)
+                result=events.verify(db,checkpoint)
+            if not result['valid']:raise ValueError('Security history verification failed.')
+            if args.command=='security-checkpoint':
+                destination=Path(args.file)
+                descriptor=os.open(destination,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+                with os.fdopen(descriptor,'w',encoding='utf-8') as output:
+                    output.write(json.dumps({'count':result['count'],'head':result['head']},sort_keys=True)+'\n')
+                if os.name=='posix':destination.chmod(0o600)
+            else:print('Security chain verified; trusted checkpoint matched.' if checkpoint else 'Security chain internally consistent; no trusted checkpoint supplied.')
+            return
         if args.command=='prune-backups':
             for path in prune_backups(args.file,args.older_than_days,args.apply):
                 print(('Removed: ' if args.apply else 'Would remove: ')+path.name)
@@ -86,6 +112,8 @@ def main():
             copy_database(args.file,args.destination)
         print('Completed. Database integrity verified; no record contents displayed.')
     except (ValueError,OSError,sqlite3.Error):
+        if args.command in ('security-checkpoint','security-verify'):
+            parser.exit(1,'Security verification or checkpoint operation failed. Preserve the database and trusted checkpoint; check integrity and file access.\n')
         parser.exit(1,'Maintenance failed. Check file access, database version, and destination existence. No existing destination is overwritten.\n')
 
 

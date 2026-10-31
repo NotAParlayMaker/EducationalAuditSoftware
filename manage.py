@@ -3,6 +3,7 @@ import argparse
 import getpass
 import sqlite3
 import accounts
+import security_events as events
 import app
 
 
@@ -35,12 +36,15 @@ def main():
                     if row['role'] == 'administrator' and db.execute("SELECT count(*) FROM users WHERE role='administrator' AND active=1").fetchone()[0] <= 1:
                         raise ValueError('Cannot disable the last active administrator.')
                     db.execute('UPDATE users SET active=0 WHERE username=?', (args.username,))
+                    events.append(db,'account_disabled',actor='local-maintenance',target=args.username)
                 else:
                     password = getpass.getpass('New password: ')
                     if password != getpass.getpass('Confirm password: ') or not 14 <= len(password) <= 256:
                         raise ValueError('Use matching passwords of 14–256 characters.')
                     salt = accounts.secrets.token_hex(16)
                     db.execute('UPDATE users SET salt=?,password_hash=? WHERE username=?', (salt, accounts.password_hash(password, salt), args.username))
+                if args.command=='reset-password':
+                    events.append(db,'password_reset',actor='local-maintenance',target=args.username)
                 db.execute('DELETE FROM sessions WHERE username=?', (args.username,))
     except (ValueError, sqlite3.IntegrityError) as error:
         parser.exit(1, str(error) + '\n')
