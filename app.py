@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+from assistant import AssistantError, suggest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -75,7 +76,14 @@ class Handler(SimpleHTTPRequestHandler):
             return None
         return parts[1]
 
+    def valid_host(self):
+        return self.headers.get('Host') in (
+            f'127.0.0.1:{self.server.server_port}',
+            f'localhost:{self.server.server_port}')
+
     def do_GET(self):
+        if not self.valid_host():
+            return self.reply(403, {'error': 'Untrusted host'})
         if not self.path.startswith('/api/'):
             return super().do_GET()
         resource = self.resource()
@@ -86,8 +94,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.reply(200, rows)
 
     def do_POST(self):
+        if not self.valid_host():
+            return self.reply(403, {'error': 'Untrusted host'})
+        is_assistant = self.path == '/api/assistant/draft'
         resource = self.resource()
-        if not resource:
+        if not resource and not is_assistant:
             return self.reply(404, {'error': 'Unknown resource'})
         # Local app: reject browser requests from other origins.
         origin = self.headers.get('Origin')
@@ -97,9 +108,15 @@ class Handler(SimpleHTTPRequestHandler):
             size = int(self.headers.get('Content-Length', '0'))
             if not 0 < size <= 8192:
                 raise ValueError('Invalid request size')
-            data = validate(resource, json.loads(self.rfile.read(size)))
+            payload = json.loads(self.rfile.read(size))
+            data = payload if is_assistant else validate(resource, payload)
         except (ValueError, UnicodeError) as error:
             return self.reply(400, {'error': str(error)})
+        if is_assistant:
+            try:
+                return self.reply(200, suggest(data))
+            except AssistantError as error:
+                return self.reply(400, {'error': str(error)})
         fields = SCHEMAS[resource]
         columns = ', '.join(f'"{field}"' for field in fields)
         placeholders = ', '.join('?' for _ in fields)
@@ -114,3 +131,4 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', '8000'))
     print(f'School workspace listening on 127.0.0.1:{port}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
+
