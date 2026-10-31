@@ -36,7 +36,7 @@ python3 -m unittest discover -s tests -v
 
 ## Development scope
 
-This is a local prototype, bound to loopback. It has no user authentication,
+This is a local prototype, bound to loopback. It has optional shared-token API access, but no individual user accounts,
 roles, encryption management, or production deployment configuration. Use
 fictional data only. Before handling real school records, add authenticated
 access, authorization, retention rules, backups, and appropriate privacy controls.
@@ -111,3 +111,36 @@ not reconstructed historical activity. Back up your SQLite file before upgrading
 
 The AI assistant remains unable to save or close findings. AI drafts enter the
 form in Draft status. Evidence, recommendations, and decisions require human review.
+
+
+## Local cybersecurity controls
+
+Configure `SCHOOL_ACCESS_TOKEN` in the server environment to protect all API reads,
+writes, history, and assistant requests. Use a randomly generated secret of 32–256
+printable ASCII characters without spaces, for example generated with
+`python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. Keep it in a
+password manager or secret configuration, never source control, a URL, or an issue.
+Enter it in the Workspace access panel; it is held in tab memory, not browser
+storage. Lock / clear tab reloads the page and clears in-memory data and the token.
+Rotate by changing the server environment and restarting; all old tokens stop working.
+
+Without the variable, the service retains local demo access. An explicitly empty or
+weak configured token fails startup. A shared token does not identify individual
+users or enforce reviewer roles. Keep the server bound to loopback. This prototype
+has no TLS and must not be exposed on a network or used with real student data.
+
+All API requests enforce Host, Origin, and browser Fetch Metadata checks. POST/PUT
+clients must send `Content-Type: application/json` and `X-Schooldesk-Request: 1`.
+If token protection is enabled, also send `Authorization: Bearer <token>` on every
+API request. The custom header is a browser CSRF defense, not a secret or login.
+Request bodies are capped at 8192 bytes and parsed as JSON objects; duplicate keys,
+non-finite constants, transfer encoding, and malformed bodies are rejected.
+
+Responses include a restrictive Content Security Policy, clickjacking protection,
+no-sniff, no-referrer, and no-store headers. Only the four UI resources are served;
+HEAD and arbitrary filesystem paths are unavailable. Request/body reads time out.
+Database errors return a generic response, raw request logging is disabled, and
+POSIX database permissions are restricted to the owner. Existing parent directory
+permissions, host security, backups, and disk encryption remain operator concerns.
+
+See [the security model](docs/security.md) for scope and remaining work.
