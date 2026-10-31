@@ -3,6 +3,10 @@ import json
 import os
 import sqlite3
 import security
+import accounts
+import operations
+from urllib.parse import urlsplit, parse_qs
+import hashlib
 import socket
 import audit_workflow as audits
 from assistant import AssistantError, suggest
@@ -46,6 +50,8 @@ def initialize():
             columns = ', '.join(f'"{field}" TEXT NOT NULL' for field in fields)
             db.execute(f'CREATE TABLE IF NOT EXISTS {name} (id INTEGER PRIMARY KEY, {columns})')
         audits.migrate(db)
+        accounts.initialize(db)
+        operations.initialize(db)
 
 
 def validate(resource, data):
@@ -93,7 +99,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def guard(self, write=False):
         try:
-            security.check_request(self, write)
+            security.check_request(self, write, authenticate=False)
+            with connect() as db:
+                self.user = accounts.principal(db, self.headers.get('Authorization', ''))
+                account_mode = accounts.enabled(db)
+            if not account_mode:
+                security.check_request(self, write)
             return True
         except security.RequestError as error:
             self.close_connection = True
@@ -139,27 +150,87 @@ class Handler(SimpleHTTPRequestHandler):
                 return super().do_GET()
             except OSError:
                 return self.reply(404, {'error': 'Resource unavailable'})
+        if self.path == '/api/auth/status':
+            security.check_request(self, authenticate=False)
+            with connect() as db:
+                return self.reply(200, {'accounts_enabled': accounts.enabled(db)})
         if not self.guard():
             return
+        if self.path == '/api/auth/me':
+            return self.reply(200, {'user': self.user})
+        if self.path == '/api/summary':
+            with connect() as db:
+                keys = [key for key in SCHEMAS if self.user is None or self.user['role']=='administrator' or key not in ('students','attendance','grades')]
+                counts = {key:db.execute(f'SELECT count(*) FROM {key}').fetchone()[0] for key in keys}
+                counts['audit_severity'] = {row[0]:row[1] for row in db.execute("SELECT severity,count(*) FROM audits WHERE status<>'Closed' GROUP BY severity")}
+                counts['overdue_audits'] = db.execute("SELECT count(*) FROM audits WHERE due_date<>'' AND due_date<date('now') AND status<>'Closed'").fetchone()[0]
+            return self.reply(200, counts)
+        if self.path == '/api/users':
+            if self.user is None:
+                return self.reply(403, {'error': 'Accounts required.'})
+            with connect() as db:
+                rows = [dict(row) for row in db.execute('SELECT username,role FROM users WHERE active=1 ORDER BY username')]
+            return self.reply(200, rows)
+        accounts.authorize_resource(self.user, self.resource())
         parts = self.path.split('?')[0].strip('/').split('/')
+        query = parse_qs(urlsplit(self.path).query, max_num_fields=12)
+        limit, offset = operations.page_query(query)
+        if len(parts)==3 and parts[:2]==['api','evidence'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18:
+            with connect() as db:
+                row=db.execute('SELECT * FROM audit_evidence WHERE id=?',(int(parts[2]),)).fetchone()
+            if not row:
+                return self.reply(404,{'error':'Evidence not found.'})
+            if hashlib.sha256(row['content']).hexdigest()!=row['sha256']:
+                return self.reply(409,{'error':'Evidence integrity check failed.'})
+            self.send_response(200)
+            self.send_header('Content-Type','application/octet-stream')
+            self.send_header('Content-Disposition','attachment; filename="evidence-'+str(row['id'])+('.pdf' if row['media_type']=='application/pdf' else '.txt')+'"')
+            self.send_header('Content-Length',str(row['size']))
+            self.end_headers();self.wfile.write(row['content']);return
+        if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
+            with connect() as db:
+                rows=[dict(row) for row in db.execute('SELECT id,audit_id,filename,media_type,sha256,size,actor,created_at FROM audit_evidence WHERE audit_id=? ORDER BY id DESC LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
+            return self.reply(200,rows)
         if len(parts) == 4 and parts[:2] == ['api', 'audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2]) <= 18 and parts[3] == 'history':
             with connect() as db:
-                rows = [dict(row) for row in db.execute('SELECT * FROM audit_history WHERE audit_id=? ORDER BY revision', (int(parts[2]),))]
+                rows = [dict(row) for row in db.execute('SELECT * FROM audit_history WHERE audit_id=? ORDER BY revision LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
             for row in rows:
                 row['snapshot'] = json.loads(row['snapshot'])
             return self.reply(200, rows)
         resource = self.resource()
         if not resource:
             return self.reply(404, {'error': 'Unknown resource'})
+        where, params = operations.audit_filters(query) if resource=='audits' else ('',[])
         with connect() as db:
-            rows = [dict(row) for row in db.execute(f'SELECT * FROM {resource} ORDER BY id DESC')]
+            rows = [dict(row) for row in db.execute(f'SELECT * FROM {resource}{where} ORDER BY id DESC LIMIT ? OFFSET ?', params+[limit,offset])]
         self.reply(200, rows)
 
     def do_POST(self):
+        if self.path == '/api/auth/login':
+            security.check_request(self, write=True, authenticate=False)
+            data = security.read_json(self)
+            with connect() as db:
+                result = accounts.login(db, data)
+            return self.reply(200, result)
         if not self.guard(write=True):
             return
+        parts = self.path.strip('/').split('/')
+        if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
+            data=security.read_json(self,maximum=360000)
+            with connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                try:
+                    result=operations.add_evidence(db,self.user,int(parts[2]),data)
+                except LookupError:
+                    return self.reply(404,{'error':'Audit not found.'})
+            return self.reply(201,result)
+        if self.path == '/api/auth/logout':
+            with connect() as db:
+                db.execute('DELETE FROM sessions WHERE token_hash=?', (accounts.digest(self.headers.get('Authorization', '').removeprefix('Bearer ')),))
+            return self.reply(200, {'logged_out': True})
         is_assistant = self.path == '/api/assistant/draft'
         resource = self.resource()
+        accounts.authorize_resource(self.user, resource, write=True)
         if not resource and not is_assistant:
             return self.reply(404, {'error': 'Unknown resource'})
         try:
@@ -172,14 +243,29 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(400, {'error': str(error)})
         if is_assistant:
             try:
-                return self.reply(200, suggest(data))
+                limited = os.environ.get('SCHOOL_AI_MODE')=='openai' and data.get('allow_external') is True
+                if limited:
+                    if not operations.AI_SLOTS.acquire(blocking=False):
+                        raise security.RequestError(429,'AI is busy. Try again shortly.')
+                    try:
+                        with connect() as db:
+                            operations.reserve_ai(db,self.user['username'] if self.user else 'demo')
+                        result=suggest(data)
+                    finally:
+                        operations.AI_SLOTS.release()
+                else:
+                    result=suggest(data)
+                return self.reply(200,result)
             except AssistantError as error:
                 return self.reply(400, {'error': str(error)})
         if resource == 'audits':
             try:
                 with connect() as db:
+                    data = accounts.authorize_audit(db, self.user, data)
                     record = audits.save(db, data)
                 return self.reply(201, record)
+            except security.RequestError:
+                raise
             except ValueError as error:
                 return self.reply(400, {'error': str(error)})
         fields = SCHEMAS[resource]
@@ -199,6 +285,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             data = security.read_json(self)
             with connect() as db:
+                data = accounts.authorize_audit(db, self.user, data, int(parts[2]))
                 record = audits.save(db, data, int(parts[2]))
             return self.reply(200, record)
         except audits.Conflict as error:
@@ -216,6 +303,12 @@ def safe_route(method):
     def wrapped(self):
         try:
             return method(self)
+        except security.RequestError as error:
+            self.close_connection = True
+            self.reply(error.status, {'error': str(error)})
+        except ValueError:
+            self.close_connection = True
+            self.reply(400, {'error':'Invalid request.'})
         except sqlite3.Error:
             self.close_connection = True
             self.reply(503, {'error': 'Storage temporarily unavailable.'})

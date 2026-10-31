@@ -11,3 +11,6 @@ data/
 *.sqlite
 *.sqlite3
 *.pem
+
+work/
+backups/

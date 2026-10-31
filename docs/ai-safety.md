@@ -40,8 +40,9 @@ Optional shared-token API access and browser boundary controls are documented in
 protected backups, review history, provider quotas, and deployment hardening.
 The audit lifecycle now records assignment, remediation, verification, closure,
 and reopening with transactional revision snapshots. History is append-only through
-the API but is not tamper-proof. Reviewer identities remain self-reported; this is
-not authenticated independent review or a claim of regulatory compliance.
+the API but is not tamper-proof. Demo-mode reviewer identities remain self-reported. Provisioned account mode
+uses signed-in identities and role checks for independent closure; neither mode
+constitutes a claim of regulatory compliance.
 
 ## Verification
 
