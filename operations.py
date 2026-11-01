@@ -7,6 +7,7 @@ import threading
 import time
 
 from security import RequestError
+import accounts
 import audit_workflow
 
 AI_SLOTS = threading.BoundedSemaphore(2)
@@ -44,9 +45,7 @@ def reserve_ai(db, username, now=None):
 def add_evidence(db, user, audit_id, data):
     if not user:
         raise RequestError(403,'Individual account sign-in is required for evidence uploads.')
-    row=db.execute('SELECT * FROM audits WHERE id=?',(audit_id,)).fetchone()
-    if not row:
-        raise LookupError('Audit not found.')
+    row=accounts.require_audit_access(db,user,audit_id)
     if row['status']=='Closed':
         raise RequestError(409,'Reopen the finding before adding evidence.')
     if user['role'] not in ('administrator','auditor') and not (user['role']=='remediation_owner' and row['owner']==user['username']):

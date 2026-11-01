@@ -127,8 +127,8 @@ def principal(db, authorization, now=None):
 def authorize_resource(user, resource, write=False):
     if user is None:
         return
-    if resource in ('students', 'attendance', 'grades') and user['role'] != 'administrator':
-        raise RequestError(403, 'This role cannot access student records.')
+    if resource is not None and not can_read_resource(user,resource):
+        raise RequestError(403, 'This role cannot access this resource.')
     if write and resource in ('assets', 'tickets') and user['role'] != 'administrator':
         raise RequestError(403, 'Only administrators can change this resource.')
 
@@ -142,9 +142,7 @@ def authorize_audit(db, user, data, audit_id=None):
     data['actor'] = user['username']  # Browser-supplied actor never establishes identity.
     previous = None
     if audit_id is not None:
-        row = db.execute('SELECT * FROM audits WHERE id=?', (audit_id,)).fetchone()
-        if row is None:
-            raise LookupError()
+        row = require_audit_access(db,user,audit_id)
         previous = dict(row)
     role, name = user['role'], user['username']
     if previous is None and role not in ('administrator', 'auditor'):
@@ -240,3 +238,33 @@ def change_password(db,user,data,now=None):
     db.execute('UPDATE users SET salt=?,password_hash=? WHERE username=?',(salt,hashed,username))
     db.execute('DELETE FROM sessions WHERE username=?',(username,))
     events.append(db,'password_changed',actor=username)
+
+
+def can_read_resource(user, resource):
+    if user is None:
+        return True  # Only reachable through an explicitly enabled demo server.
+    if resource in ('students','attendance','grades'):
+        return user['role']=='administrator'
+    if resource in ('assets','tickets'):
+        return user['role'] in ('administrator','auditor')
+    return resource=='audits' and user['role'] in ROLES
+
+
+def audit_scope(user, alias=''):
+    if alias not in ('','a.'):
+        raise ValueError('Invalid internal query alias.')
+    if user is None or user['role'] in ('administrator','auditor'):
+        return '1=1', []
+    if user['role']=='remediation_owner':
+        return alias+'owner=?', [user['username']]
+    if user['role']=='reviewer':
+        return alias+'reviewer=?', [user['username']]
+    return '0=1', []
+
+
+def require_audit_access(db,user,audit_id):
+    scope,params=audit_scope(user)
+    row=db.execute('SELECT * FROM audits WHERE id=? AND '+scope,[audit_id]+params).fetchone()
+    if row is None:
+        raise RequestError(404,'Audit not found.')
+    return row

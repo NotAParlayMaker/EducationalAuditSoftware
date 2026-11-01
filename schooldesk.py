@@ -10,13 +10,13 @@ import maintenance
 import runtime
 
 
-def main():
+def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['init','doctor','serve'])
     parser.add_argument('--username',default='school-admin',help='first administrator username for init')
     parser.add_argument('--allow-demo',action='store_true',help='explicitly allow serving without individual accounts')
     parser.add_argument('--port',type=int,default=None)
-    args=parser.parse_args()
+    args=parser.parse_args(argv)
     try:
         app.initialize()
         if args.command=='init':
@@ -40,6 +40,7 @@ def main():
             except ValueError:raise ValueError('PORT must be a valid integer.') from None
             if not 1<=port<=65535:raise ValueError('Port must be 1–65535.')
             server=app.ThreadingHTTPServer(('127.0.0.1',port),app.Handler)
+            server.allow_demo=args.allow_demo
             print(f'Schooldesk ready at http://127.0.0.1:{port}',flush=True)
             try:server.serve_forever()
             except KeyboardInterrupt:pass

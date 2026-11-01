@@ -100,8 +100,10 @@ def record_event(db, record, actor):
 
 
 def save(db, data, audit_id=None):
-    # Serialize read/validate/write to prevent concurrent saves losing updates.
-    db.execute('BEGIN IMMEDIATE')
+    # A caller-supplied transaction must acquire its write lock before authorization.
+    # Otherwise serialize read/validate/write here to prevent lost updates.
+    if not db.in_transaction:
+        db.execute('BEGIN IMMEDIATE')
     previous = None
     if audit_id is not None:
         row = db.execute('SELECT * FROM audits WHERE id=?', (audit_id,)).fetchone()

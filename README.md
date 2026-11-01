@@ -37,7 +37,7 @@ python3 -m unittest discover -s tests -v
 
 ## Development scope
 
-This is a local prototype, bound to loopback. It has optional shared-token API access, and optional individual accounts with server-enforced roles, but no
+This is a local prototype, bound to loopback. It requires individual accounts by default, with shared-token access available only in explicit demo mode, but no
 encryption management or production deployment configuration. Use
 fictional data only. Before handling real school records, add authenticated
 access, authorization, retention rules, backups, and appropriate privacy controls.
@@ -126,7 +126,7 @@ Enter it in the Workspace access panel; it is held in tab memory, not browser
 storage. Lock / clear tab reloads the page and clears in-memory data and the token.
 Rotate by changing the server environment and restarting; all old tokens stop working.
 
-Without the variable, the service retains local demo access. An explicitly empty or
+A shared token never enables demo mode by itself. Without provisioned accounts, protected APIs are closed unless the server was explicitly started with --allow-demo. An explicitly empty or
 weak configured token fails startup. A shared token does not identify individual
 users or enforce reviewer roles. Keep the server bound to loopback. This prototype
 has no TLS and must not be exposed on a network or used with real student data.
@@ -172,17 +172,20 @@ Restarting the server does not revoke existing sessions; they retain their expir
 Creating the first administrator permanently enables account mode for that database.
 Missing, expired, or disabled-account sessions are rejected. Legacy shared workspace
 tokens cannot bypass account mode, and disabling all users never restores demo access.
-Databases without provisioned accounts retain the prior local demo/token behavior.
+Databases without provisioned accounts deny protected API access by default. Start with `--allow-demo` only for an intentional fictional-data demo; a configured shared token is an additional demo gate, not an account-mode bypass.
 
 | Role | Permissions |
 |---|---|
 | Administrator | All school modules; create and manage findings and assignments; close only when already assigned as independent reviewer |
 | Auditor | Read IT records; create findings, assign active owner/reviewer accounts, update details, reopen; no student records or closure |
-| Remediation owner | Read IT records; update remediation/evidence and progress of findings assigned to them; no reassignment or closure |
-| Reviewer | Read IT records; verify assigned findings, return them for remediation, or close with notes; no changes to evidence or assignment |
+| Remediation owner | Read assigned findings, their history and evidence; update remediation/evidence and progress of findings assigned to them; no reassignment or closure |
+| Reviewer | Read assigned findings, their history and evidence; verify assigned findings, return them for remediation, or close with notes; no changes to evidence or assignment |
 
-All account roles can read all IT records and audit history, and use the assistant.
-This is role-level access, not per-school or per-record read isolation. Only
+Owners and reviewers can read only findings currently assigned to their role,
+including their history and evidence. Administrators and auditors retain workspace-wide
+audit oversight. Assets and support tickets are limited to administrators/auditors;
+all signed-in roles may use the assistant. This is assignment isolation within one
+workspace, not multi-school tenancy. Only
 administrators can read/write student, attendance, and grade data or change assets
 and tickets. Assignment fields must contain exact active usernames with compatible
 roles. Reconcile legacy free-text assignments before progressing old findings.
@@ -260,3 +263,20 @@ Successful backup commands record freshness for readiness warnings. Security too
 remain available in a collapsed account panel. `/health` provides a minimal local
 liveness check; detailed readiness requires administrator access. No public server
 or backup scheduler is automatically installed.
+
+
+## Assignment privacy and explicit demos
+
+Assignment restrictions apply on the server to lists, filters, pagination, history,
+evidence metadata/downloads/uploads, mutations, queues, directory lookups, and
+aggregate counts. Reassignment removes the former assignee's access on subsequent
+requests; knowing a record or attachment ID is not sufficient. Unauthorized and
+missing findings/attachments use the same not-found response. Write authorization
+and audit updates share a database transaction.
+
+Both `python3 schooldesk.py serve` and `python3 app.py` require account setup.
+For an intentional local fictional-data demo, use `python3 schooldesk.py serve
+--allow-demo` (or `python3 app.py --allow-demo`). The flag is process-local and
+cannot bypass accounts already provisioned in the database. Custom HTTP servers
+also deny unprovisioned APIs unless explicitly marked as demo servers. The UI
+shows a demo banner when that mode is active. See [access boundaries](docs/access-boundaries.md).

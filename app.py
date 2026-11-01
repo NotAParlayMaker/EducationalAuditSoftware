@@ -107,6 +107,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.user = accounts.principal(db, self.headers.get('Authorization', ''))
                 account_mode = accounts.enabled(db)
             if not account_mode:
+                if not getattr(self.server,'allow_demo',False):
+                    raise security.RequestError(503,'Account setup required. Run schooldesk.py init or explicitly enable demo mode.')
                 security.check_request(self, write)
             return True
         except security.RequestError as error:
@@ -160,7 +162,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/auth/status':
             security.check_request(self, authenticate=False)
             with connect() as db:
-                return self.reply(200, {'accounts_enabled': accounts.enabled(db)})
+                return self.reply(200, {'accounts_enabled': accounts.enabled(db),'demo_enabled':not accounts.enabled(db) and bool(getattr(self.server,'allow_demo',False))})
         if not self.guard():
             return
         if self.path=='/api/work-queue':
@@ -186,16 +188,21 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(200, {'user': self.user})
         if self.path == '/api/summary':
             with connect() as db:
-                keys = [key for key in SCHEMAS if self.user is None or self.user['role']=='administrator' or key not in ('students','attendance','grades')]
-                counts = {key:db.execute(f'SELECT count(*) FROM {key}').fetchone()[0] for key in keys}
-                counts['audit_severity'] = {row[0]:row[1] for row in db.execute("SELECT severity,count(*) FROM audits WHERE status<>'Closed' GROUP BY severity")}
-                counts['overdue_audits'] = db.execute("SELECT count(*) FROM audits WHERE due_date<>'' AND due_date<date('now') AND status<>'Closed'").fetchone()[0]
+                keys = [key for key in SCHEMAS if accounts.can_read_resource(self.user,key)]
+                scope,scope_params=accounts.audit_scope(self.user)
+                counts = {key:db.execute(f'SELECT count(*) FROM {key}'+(' WHERE '+scope if key=='audits' else ''),scope_params if key=='audits' else []).fetchone()[0] for key in keys}
+                counts['audit_severity'] = {row[0]:row[1] for row in db.execute("SELECT severity,count(*) FROM audits WHERE ("+scope+") AND status<>'Closed' GROUP BY severity",scope_params)}
+                counts['overdue_audits'] = db.execute("SELECT count(*) FROM audits WHERE ("+scope+") AND due_date<>'' AND due_date<date('now') AND status<>'Closed'",scope_params).fetchone()[0]
             return self.reply(200, counts)
         if self.path == '/api/users':
             if self.user is None:
                 return self.reply(403, {'error': 'Accounts required.'})
             with connect() as db:
-                rows = [dict(row) for row in db.execute('SELECT username,role FROM users WHERE active=1 ORDER BY username')]
+                if self.user['role'] in ('administrator','auditor'):
+                    rows=[dict(row) for row in db.execute('SELECT username,role FROM users WHERE active=1 ORDER BY username')]
+                else:
+                    scope,params=accounts.audit_scope(self.user)
+                    rows=[dict(row) for row in db.execute('SELECT username,role FROM users WHERE active=1 AND (username=? OR username IN (SELECT owner FROM audits WHERE '+scope+') OR username IN (SELECT reviewer FROM audits WHERE '+scope+')) ORDER BY username',[self.user['username']]+params+params)]
             return self.reply(200, rows)
         accounts.authorize_resource(self.user, self.resource())
         parts = self.path.split('?')[0].strip('/').split('/')
@@ -203,7 +210,8 @@ class Handler(SimpleHTTPRequestHandler):
         limit, offset = operations.page_query(query)
         if len(parts)==3 and parts[:2]==['api','evidence'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18:
             with connect() as db:
-                row=db.execute('SELECT * FROM audit_evidence WHERE id=?',(int(parts[2]),)).fetchone()
+                scope,params=accounts.audit_scope(self.user,'a.')
+                row=db.execute('SELECT e.* FROM audit_evidence e JOIN audits a ON a.id=e.audit_id WHERE e.id=? AND ('+scope+')',[int(parts[2])]+params).fetchone()
             if not row:
                 return self.reply(404,{'error':'Evidence not found.'})
             if hashlib.sha256(row['content']).hexdigest()!=row['sha256']:
@@ -215,10 +223,12 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers();self.wfile.write(row['content']);return
         if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
             with connect() as db:
+                accounts.require_audit_access(db,self.user,int(parts[2]))
                 rows=[dict(row) for row in db.execute('SELECT id,audit_id,filename,media_type,sha256,size,actor,created_at FROM audit_evidence WHERE audit_id=? ORDER BY id DESC LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
             return self.reply(200,rows)
         if len(parts) == 4 and parts[:2] == ['api', 'audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2]) <= 18 and parts[3] == 'history':
             with connect() as db:
+                accounts.require_audit_access(db,self.user,int(parts[2]))
                 rows = [dict(row) for row in db.execute('SELECT * FROM audit_history WHERE audit_id=? ORDER BY revision LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
             for row in rows:
                 row['snapshot'] = json.loads(row['snapshot'])
@@ -227,6 +237,10 @@ class Handler(SimpleHTTPRequestHandler):
         if not resource:
             return self.reply(404, {'error': 'Unknown resource'})
         where, params = operations.audit_filters(query) if resource=='audits' else ('',[])
+        if resource=='audits':
+            scope,scope_params=accounts.audit_scope(self.user)
+            where=(where+' AND ('+scope+')') if where else ' WHERE '+scope
+            params+=scope_params
         with connect() as db:
             rows = [dict(row) for row in db.execute(f'SELECT * FROM {resource}{where} ORDER BY id DESC LIMIT ? OFFSET ?', params+[limit,offset])]
         self.reply(200, rows)
@@ -300,6 +314,7 @@ class Handler(SimpleHTTPRequestHandler):
         if resource == 'audits':
             try:
                 with connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
                     data = accounts.authorize_audit(db, self.user, data)
                     record = audits.save(db, data)
                 return self.reply(201, record)
@@ -324,6 +339,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             data = security.read_json(self)
             with connect() as db:
+                db.execute('BEGIN IMMEDIATE')
                 data = accounts.authorize_audit(db, self.user, data, int(parts[2]))
                 record = audits.save(db, data, int(parts[2]))
             return self.reply(200, record)
@@ -362,8 +378,6 @@ for route in ('do_GET', 'do_POST', 'do_PUT'):
 
 
 if __name__ == '__main__':
-    initialize()
-    port = int(os.environ.get('PORT', '8000'))
-    print(f'School workspace listening on 127.0.0.1:{port}', flush=True)
-    ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
-
+    import sys
+    import schooldesk
+    schooldesk.main(['serve',*sys.argv[1:]])

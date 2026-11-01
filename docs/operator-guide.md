@@ -22,8 +22,9 @@ Every creation prompts for a password without echo; no password appears in comma
 arguments. Initialization is repeatable and will not overwrite an existing account
 setup. `serve` requires provisioned accounts unless `--allow-demo` is deliberately
 selected. Use `--port 8001` if the default port is busy. The service remains bound
-to `127.0.0.1`; stop it with Ctrl+C. Existing `python3 app.py` behavior remains for
-compatibility, but the guided launcher is the recommended entry point.
+to `127.0.0.1`; stop it with Ctrl+C. The legacy `python3 app.py` entry point now delegates to the same account-required
+launcher. `python3 app.py --allow-demo` is an explicit demo choice, never a bypass
+for an already provisioned database.
 
 Open `http://127.0.0.1:8000` and sign in. Passwords, keys, and session tokens must
 not be stored in repository files. Keep separate owner and reviewer accounts;

@@ -24,11 +24,11 @@ Protect the machine, application source, parent directories, database, and backu
 Changing the variable and restarting rotates the token. Locking the browser tab
 clears its in-memory state; it does not revoke a copied token at the server.
 
-For databases without provisioned accounts, token access is one shared workspace gate, not individual authentication. An owner
+For unprovisioned databases, protected APIs are closed unless demo mode is explicitly enabled. In that deliberate demo mode, token access is one shared workspace gate, not individual authentication. An owner
 and reviewer typed into forms can still impersonate one another. All token holders
 have the same API access. Same-origin script compromise or malicious browser
 extensions can act with the user's access. Local processes can reach the service,
-and without a configured token there is no credential gate. Loopback binding is
+and explicit demos without a configured token have no credential gate. Loopback binding is
 retained; never expose this plain-HTTP prototype publicly.
 
 ## Remaining risks and next work
@@ -68,7 +68,9 @@ navigation. Reviewer identity must already be assigned before closure. History
 from demo mode is not retroactively authenticated. Account provisioning and resets
 require trusted filesystem/terminal access; no network account administration exists.
 
-Read permissions currently expose all IT records to all account roles. This is not
+Owners and reviewers now have assignment-scoped audit read access, including
+history and evidence. Administrators/auditors retain workspace-wide audit access;
+assets and tickets are restricted to those oversight roles. This is not multi-school
 tenant isolation. The deployment remains loopback HTTP with synthetic data only.
 
 Evidence, quota, backup, and retention controls are described in [operations](operations.md). File signature checks are not malware scanning; backups require protected storage.
@@ -81,3 +83,5 @@ review. [Security activity and checkpoints](security-activity.md) documents the
 bounded metadata, hash-chain verification, independent checkpoint requirement,
 retention, and incident-response limitations. General HTTP logs remain disabled;
 these typed events do not capture raw request or school-record content.
+
+See [access boundaries](access-boundaries.md) for exact scope, reassignment behavior, and mandatory account-mode defaults.
