@@ -12,6 +12,7 @@ import app
 import runtime
 import json
 import security_events as events
+import integrity_anchor
 
 
 def readonly(path):
@@ -66,16 +67,32 @@ def prune_backups(directory, days, apply=False, now=None):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['backup','verify','restore','snapshot','prune-backups','security-checkpoint','security-verify'])
+    parser.add_argument('command',choices=['backup','verify','restore','snapshot','prune-backups','security-checkpoint','security-verify','anchor-create','anchor-verify'])
     parser.add_argument('file',nargs='?',help='backup destination, or backup source for verify/restore')
     parser.add_argument('--destination',help='new database path for restore; never overwrite the running database')
     parser.add_argument('--older-than-days',type=int,default=30,help='backup retention age; default 30 days')
+    parser.add_argument('--published-commitment',help='independently obtained public commitment hash, optionally prefixed 0x')
     parser.add_argument('--checkpoint',help='previous trusted checkpoint JSON for security-verify')
     parser.add_argument('--apply',action='store_true',help='actually remove expired generated backups; otherwise preview')
     args=parser.parse_args()
     if args.command!='security-verify' and not args.file:
         parser.error('A destination or directory is required.')
     try:
+        if args.command in ('anchor-create','anchor-verify'):
+            with app.connect() as db:
+                if args.command=='anchor-create':
+                    bundle=integrity_anchor.create(db)
+                    descriptor=os.open(args.file,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+                    with os.fdopen(descriptor,'w',encoding='utf-8') as output:output.write(json.dumps(bundle,sort_keys=True)+'\n')
+                    print('Public commitment: '+bundle['commitment'])
+                    print('Private bundle created. No blockchain transaction was submitted.')
+                else:
+                    with open(args.file,'rb') as source:raw=source.read(8193)
+                    if len(raw)>8192:raise ValueError('Anchor bundle too large.')
+                    result=integrity_anchor.verify(db,json.loads(raw),args.published_commitment)
+                    print(json.dumps(result,sort_keys=True))
+                    if not result['valid']:parser.exit(1,'Snapshot differs or history does not match. Verify against the corresponding backup; legitimate later edits also change the dataset root.\n')
+            return
         if args.command in ('security-checkpoint','security-verify'):
             with app.connect() as db:
                 checkpoint=None

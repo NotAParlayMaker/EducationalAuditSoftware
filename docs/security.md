@@ -34,7 +34,7 @@ retained; never expose this plain-HTTP prototype publicly.
 ## Remaining risks and next work
 
 - Account mode now provides individual accounts, authenticated actors, roles, and reviewer checks. MFA, per-school isolation, and self-service recovery remain future work.
-- Login throttling is implemented. AI request budgets and a two-call concurrency cap are implemented. General connection concurrency limits and broader denial-of-service defense remain future work.
+- Login throttling is implemented. AI request budgets and a two-call concurrency cap are implemented. A 16-worker HTTP cap is implemented; broader denial-of-service defense and public hosting controls remain future work.
 - Pagination and backup/restore testing are implemented. Encrypted storage,
   retention/deletion policy, and protected security-event logging.
 - Managed HTTPS deployment, session lifecycle, and security monitoring before any

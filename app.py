@@ -13,8 +13,39 @@ import hashlib
 import socket
 import audit_workflow as audits
 from assistant import AssistantError, suggest
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer as BaseHTTPServer
+import threading
 from pathlib import Path
+
+class ThreadingHTTPServer(BaseHTTPServer):
+    """Bound local worker growth; not a public-facing DDoS defense."""
+    daemon_threads=True
+    block_on_close=False
+    worker_limit=16
+
+    def __init__(self,*args,**kwargs):
+        self.worker_slots=threading.BoundedSemaphore(self.worker_limit)
+        super().__init__(*args,**kwargs)
+
+    def process_request(self,request,client_address):
+        if not self.worker_slots.acquire(blocking=False):
+            body=b'{"error":"Server busy. Retry later."}'
+            response=(b'HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nCache-Control: no-store\r\nRetry-After: 1\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body)
+            try:
+                request.settimeout(0.1)
+                request.sendall(response)
+            except OSError:pass
+            self.shutdown_request(request)
+            return
+        try:super().process_request(request,client_address)
+        except Exception:
+            self.worker_slots.release()
+            raise
+
+    def process_request_thread(self,request,client_address):
+        try:super().process_request_thread(request,client_address)
+        finally:self.worker_slots.release()
+
 
 ROOT = Path(__file__).parent
 DB = Path(os.environ.get('SCHOOL_DB', ROOT / 'data' / 'school.db'))

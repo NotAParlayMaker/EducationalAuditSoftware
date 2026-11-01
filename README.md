@@ -291,3 +291,16 @@ as the application, with spreadsheet-formula protection for CSV.
 
 See [the pipeline guide](docs/data-pipeline.md) for API contracts, limits, examples,
 error handling, and the difference between review exports and recovery backups.
+
+## AI abuse and integrity commitments
+
+The provider boundary now blocks redirects, malformed/incomplete output, tool calls,
+links, and narrow obfuscated identifier examples. Notes remain untrusted data;
+models still cannot execute tools or approve findings. HTTP workers are capped to
+limit local resource exhaustion.
+
+Optional `maintenance.py anchor-create` and `anchor-verify` commands create and
+check private Merkle snapshot bundles with a compact public hash commitment. This
+can support a separately reviewed external witness or blockchain anchor, but no
+wallet, chain connection, or transaction is configured. School records must never
+be placed on a public chain. See [AI defenses and integrity anchoring](docs/ai-and-integrity.md).

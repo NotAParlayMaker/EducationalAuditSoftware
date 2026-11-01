@@ -16,14 +16,14 @@ class AssistantUnitTest(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         self.note = {'note': 'Fictional library update review is missing.', 'allow_external': False}
 
-    @patch('assistant.urllib.request.urlopen')
+    @patch('assistant.PROVIDER_OPENER.open')
     def test_offline_is_deterministic_and_never_calls_network(self, transport):
         first = assistant.suggest(self.note)
         self.assertEqual(first, assistant.suggest(self.note))
         self.assertEqual(first['mode'], 'offline')
         transport.assert_not_called()
 
-    @patch('assistant.urllib.request.urlopen')
+    @patch('assistant.PROVIDER_OPENER.open')
     def test_external_requires_explicit_confirmation(self, transport):
         os.environ['SCHOOL_AI_MODE'] = 'openai'
         with self.assertRaises(assistant.AssistantError):
@@ -40,14 +40,14 @@ class AssistantUnitTest(unittest.TestCase):
                 with self.assertRaises(assistant.AssistantError):
                     assistant.suggest(data)
 
-    @patch('assistant.urllib.request.urlopen')
+    @patch('assistant.PROVIDER_OPENER.open')
     def test_provider_contract_and_no_storage(self, transport):
         os.environ.update(SCHOOL_AI_MODE='openai', SCHOOL_AI_MODEL='configured-test-model', OPENAI_API_KEY='test-key')
         draft = {
             'area': 'IT', 'finding': 'Unverified update concern',
             'recommendation': 'Review evidence', 'priority': 'Low', 'review_note': 'Human review required'}
         response = MagicMock()
-        response.read.return_value = json.dumps({'choices': [{'message': {'content': json.dumps(draft)}}]}).encode()
+        response.read.return_value = json.dumps({'choices': [{'finish_reason':'stop','message': {'role':'assistant','content': json.dumps(draft)}}]}).encode()
         transport.return_value.__enter__.return_value = response
         result = assistant.suggest(dict(self.note, allow_external=True))
         self.assertEqual(result['draft'], draft)
@@ -59,7 +59,7 @@ class AssistantUnitTest(unittest.TestCase):
         self.assertEqual(transport.call_args.kwargs['timeout'], 20)
         # Extra privileged fields fail validation; errors never echo response values.
         draft['execute'] = 'PRIVATE-MARKER'
-        response.read.return_value = json.dumps({'choices': [{'message': {'content': json.dumps(draft)}}]}).encode()
+        response.read.return_value = json.dumps({'choices': [{'finish_reason':'stop','message': {'role':'assistant','content': json.dumps(draft)}}]}).encode()
         with self.assertRaises(assistant.AssistantError) as caught:
             assistant.suggest(dict(self.note, allow_external=True))
         self.assertNotIn('PRIVATE-MARKER', str(caught.exception))

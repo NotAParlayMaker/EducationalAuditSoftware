@@ -27,7 +27,7 @@ provider failures. At most two external requests execute concurrently per proces
 quota or concurrency exhaustion returns HTTP 429 without calling the provider.
 Offline templates make no provider calls. Request limits are not dollar spending
 limits: configure billing/project spending controls with the provider as well.
-The application still has no general HTTP connection/concurrency protection.
+The local HTTP server also caps concurrent workers at 16; this is not a full public-facing denial-of-service defense.
 
 ## Backup, verify, and restore
 
