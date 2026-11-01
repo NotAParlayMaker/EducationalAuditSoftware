@@ -48,6 +48,7 @@ def main():
                     db.execute('DELETE FROM mfa_recovery WHERE username=?',(args.username,))
                     db.execute('DELETE FROM mfa_budget WHERE username=?',(args.username,))
                     db.execute('DELETE FROM mfa_login_budget WHERE username=?',(args.username,))
+                    db.execute('DELETE FROM mfa_backoff_budget WHERE identity=?',(accounts.digest(args.username),))
                     events.append(db,'mfa_reset',actor='local-maintenance',target=args.username)
                 elif args.command == 'disable-user':
                     if row['role'] == 'administrator' and db.execute("SELECT count(*) FROM users WHERE role='administrator' AND active=1").fetchone()[0] <= 1:

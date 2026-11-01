@@ -39,7 +39,7 @@ class MFAHTTPTest(unittest.TestCase):
         self.environment=patch.dict(os.environ,{'SCHOOL_MFA_KEY':Fernet.generate_key().decode()})
         self.environment.start();self.addCleanup(self.environment.stop)
         with app.connect() as db:
-            for table in ('mfa_accounts','mfa_recovery','mfa_budget','mfa_login_budget'):db.execute('DELETE FROM '+table)
+            for table in ('mfa_accounts','mfa_recovery','mfa_budget','mfa_login_budget','mfa_backoff_budget'):db.execute('DELETE FROM '+table)
             db.execute("DELETE FROM account_settings WHERE key='mfa_required'")
 
     def enroll(self,token):
