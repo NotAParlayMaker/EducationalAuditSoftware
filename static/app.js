@@ -26,6 +26,7 @@ function drawRows() {
  if(!filtered.length) { const tr=document.createElement('tr'), td=cell('td',records.length?'No matching records.':'No records yet. Add your first record above.'); td.colSpan=tableFields(current).length+(current==='audits'?1:0);tr.append(td);$('rows').append(tr); }
 }
 async function show(key, editing=false) {
+ window.learningUI?.hide();
  const request=++viewRequest; $('form').hidden=true;
  current=key; editingAudit=null; $('audit-history')?.remove(); $('evidence-panel')?.remove(); $('error').textContent='';
  document.querySelectorAll('nav button').forEach(button=>button.classList.toggle('active',button.dataset.key===(key||'')));
@@ -148,6 +149,7 @@ $('login-form').onsubmit = async event => {
  assignmentUsers=await api('users');
  setupPipeline();
  await show(null);
+ await window.learningUI?.signedIn();
  $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · 15-minute idle timeout · one-hour maximum session';
 
  }catch(error){$('identity').textContent=error.message;}
@@ -191,6 +193,7 @@ async function auditEvidence(row) {
 }
 
 function signedOut(message) {
+ window.learningUI?.clear();
  workspaceToken='';signedInUser=null;sessionGeneration++;$('pipeline-panel').hidden=true;resetPipeline();$('pipeline-file').value='';$('pipeline-job-list').replaceChildren();
  $('security-panel').hidden=true;$('module').hidden=true;$('overview').hidden=true;
  $('queue-items').replaceChildren();$('operations-status').replaceChildren();$('operations-card').hidden=true;assignmentUsers=[];$('account-tools').open=false;
@@ -250,7 +253,7 @@ $('operations-refresh').onclick=refreshReadiness;
 
 function resetPipeline(){preparedBatch=null;exportCursor=0;$('pipeline-preview').replaceChildren();$('pipeline-confirm').checked=false;$('pipeline-commit').disabled=true;$('pipeline-export-next').disabled=true;$('pipeline-status').textContent='';}
 function setupPipeline(){
- resetPipeline();$('pipeline-panel').hidden=false;$('pipeline-resource').replaceChildren();
+ resetPipeline();$('pipeline-panel').hidden=!Object.keys(modules).some(canReadModule);$('pipeline-resource').replaceChildren();
  for(const key of Object.keys(modules).filter(canReadModule)){const option=cell('option',modules[key].title);option.value=key;$('pipeline-resource').append(option);}
  updatePipelineAccess();
 }

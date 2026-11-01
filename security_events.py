@@ -11,7 +11,7 @@ CODES = frozenset({'account_created','account_disabled','password_reset','login_
     'password_changed','password_change_failed','password_change_throttled',
     'import_preview','import_committed','export_completed','mfa_login_throttled','mfa_policy_enabled','mfa_enrollment_started','mfa_enrollment_failed','mfa_enrollment_throttled','mfa_enabled','mfa_reset','reauthenticated','evidence_scanned','evidence_quarantined','startup_sessions_revoked','cli_users_listed','event_history_sealed'})
 ZERO = '0' * 64
-CODES=CODES | {'cli_maintenance','cli_maintenance_failed','cli_account_failed','cli_doctor','cli_server_started','mfa_backoff_throttled'}
+CODES=CODES | {'cli_maintenance','cli_maintenance_failed','cli_account_failed','cli_doctor','cli_server_started','mfa_backoff_throttled','learning_recorded'}
 
 
 def initialize(db):

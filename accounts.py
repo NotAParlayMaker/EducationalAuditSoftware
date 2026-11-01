@@ -10,7 +10,7 @@ import mfa
 
 from security import RequestError, auth_throttled
 
-ROLES = ('administrator', 'registrar', 'auditor', 'remediation_owner', 'reviewer')
+ROLES = ('administrator', 'registrar', 'teacher', 'auditor', 'remediation_owner', 'reviewer')
 ITERATIONS = 600_000
 SESSION_SECONDS = 3600
 IDLE_SECONDS = 900

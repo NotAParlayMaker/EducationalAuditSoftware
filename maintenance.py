@@ -29,6 +29,7 @@ def verify(path):
     with readonly(path) as db:
         if [row[0] for row in db.execute('PRAGMA quick_check')]!=['ok']:
             raise ValueError('Database integrity check failed.')
+        if db.execute('PRAGMA foreign_key_check').fetchone():raise ValueError('Database contains orphaned relationships.')
         tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not {'audits','audit_history','students','users','account_settings'}<=tables:
             raise ValueError('Not a current Schooldesk database.')

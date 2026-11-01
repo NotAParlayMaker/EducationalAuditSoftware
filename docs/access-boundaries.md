@@ -5,7 +5,8 @@
 | Role | Audit findings, history, and attachments | Other modules |
 |---|---|---|
 | IT administrator | All findings in this workspace | IT inventory/tickets; no student modules |
-| Registrar | None | Student, attendance, and grade modules only |
+| Registrar | None | Student, attendance, and grade modules; learning roster and review oversight |
+| Teacher | None | Learning evidence and reviews for currently assigned classes/current enrollments; no general student/guardian or IT access |
 | Auditor | All findings in this workspace | IT assets/tickets read; no student modules |
 | Remediation owner | Only findings whose current owner equals the signed-in username | No assets, tickets, or student modules |
 | Reviewer | Only findings whose current reviewer equals the signed-in username | No assets, tickets, or student modules |
@@ -76,3 +77,5 @@ Tests use independent fixture accounts and invented records, with no external
 model calls or real school data.
 
 [Security audit upgrade steps](security-audit-response.md) document the registrar migration and mandatory demo token.
+
+See [learning evidence](learning-evidence.md) for teacher assignment/enrollment revocation, minimal student fields, and immutable educational history.

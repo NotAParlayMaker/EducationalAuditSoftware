@@ -122,3 +122,7 @@ records after a malicious model response, worker exhaustion/recovery, private bu
 contents, matching recovery copies, snapshot changes, independent commitments, and
 an independent recursive reference for odd-sized Merkle trees. Tests use synthetic
 inputs and mocked model responses. No live model or blockchain call is required.
+
+## Learning dataset coverage
+
+New bundles use `schooldesk.anchor.v2` and include the seven learning-evidence tables in addition to the original dataset. Verification still accepts legacy v1 bundles and explicitly reports `learning_records_covered: false` for them. Old commitments do not retroactively cover the new module. See [learning evidence](learning-evidence.md) for record scope and restore validation.

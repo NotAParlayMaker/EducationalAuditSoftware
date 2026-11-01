@@ -33,7 +33,7 @@ def initialize(db):
 def required(user,db=None):
     stored=db.execute("SELECT value FROM account_settings WHERE key='mfa_required'").fetchone() if db is not None else None
     policy=stored[0] if stored else ''
-    return policy=='all' or os.environ.get('SCHOOL_PROFILE')=='cloud' or ((policy=='privileged' or os.environ.get('SCHOOL_REQUIRE_MFA')=='1') and user['role'] in ('administrator','registrar','reviewer'))
+    return policy=='all' or os.environ.get('SCHOOL_PROFILE')=='cloud' or ((policy=='privileged' or os.environ.get('SCHOOL_REQUIRE_MFA')=='1') and user['role'] in ('administrator','registrar','teacher','reviewer'))
 
 
 def active(db,username):

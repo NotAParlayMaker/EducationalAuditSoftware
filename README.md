@@ -184,6 +184,7 @@ Databases without provisioned accounts deny protected API access by default. Sta
 |---|---|
 | IT administrator | IT inventory and tickets; create and manage findings and assignments; close only when already assigned as independent reviewer |
 | Registrar | Student, attendance, and grade records/imports/exports; no IT or security administration |
+| Teacher | Learning evidence, formative reviews and reassessments for currently assigned classes and enrollments; no general student/guardian or IT access |
 | Auditor | Read IT records; create findings, assign active owner/reviewer accounts, update details, reopen; no student records or closure |
 | Remediation owner | Read assigned findings, their history and evidence; update remediation/evidence and progress of findings assigned to them; no reassignment or closure |
 | Reviewer | Read assigned findings, their history and evidence; verify assigned findings, return them for remediation, or close with notes; no changes to evidence or assignment |
@@ -335,3 +336,14 @@ hash-verified installation, and the repository ruleset owner action.
 
 [Uniform lockouts and factor-first recovery](docs/authentication-backoff.md)
 documents the independent backoff-factor budget and authentication order.
+
+## Learning evidence and teacher review
+
+Registrars and assigned teachers can now use **Learning evidence** for skill-linked
+observations, immutable corrections, evidence timelines, rubric versions, cited
+formative judgments, reassessment requests, and descriptive opportunity reports.
+Missing assessments are separate from incorrect responses. No mastery probability,
+automatic placement decision, or external AI processing is introduced.
+
+See [setup, access rules, and limitations](docs/learning-evidence.md). Provision a
+separate `teacher` account through `manage.py`; registrars create classes and rosters.
