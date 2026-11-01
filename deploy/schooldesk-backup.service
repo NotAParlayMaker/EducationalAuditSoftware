@@ -1,0 +1,18 @@
+[Unit]
+Description=Schooldesk authenticated encrypted backup
+[Service]
+Type=oneshot
+User=schooldesk-backup
+Group=schooldesk-backup
+SupplementaryGroups=schooldesk-data
+WorkingDirectory=/opt/schooldesk
+EnvironmentFile=/etc/schooldesk/backup.env
+ExecStart=/opt/schooldesk/.venv/bin/python deploy/run_backup.py
+UMask=0077
+RuntimeMaxSec=300
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/schooldesk-backups /var/lib/schooldesk-backup-status

@@ -1,0 +1,63 @@
+# Include inside nginx's http {} context. Replace schooldesk.example.invalid,
+# install real TLS certificates, and generate the root-only proxy-token include.
+limit_req_zone $binary_remote_addr zone=schooldesk_general:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=schooldesk_login:10m rate=3r/m;
+limit_conn_zone $binary_remote_addr zone=schooldesk_connections:10m;
+server {
+    listen 80;
+    server_name schooldesk.example.invalid;
+    return 308 https://schooldesk.example.invalid$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name schooldesk.example.invalid;
+    ssl_certificate /etc/schooldesk/tls/fullchain.pem;
+    ssl_certificate_key /etc/schooldesk/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+    add_header Strict-Transport-Security "max-age=86400" always;
+    server_tokens off;
+    access_log off;
+    error_log /var/log/nginx/schooldesk-error.log crit;
+    error_page 429 = @rate_limited;
+    error_page 413 = @body_limit;
+    error_page 502 504 = @gateway_unavailable;
+    client_max_body_size 512000;
+    client_header_timeout 10s;
+    client_body_timeout 10s;
+    send_timeout 10s;
+    keepalive_timeout 15s;
+    limit_req_status 429;
+    limit_conn_status 429;
+    limit_conn schooldesk_connections 10;
+    location @rate_limited {
+        default_type application/json;
+        add_header Retry-After 60 always;
+        return 429 '{"error":"Gateway rate limit reached. Retry later."}';
+    }
+    location @body_limit {
+        default_type application/json;
+        return 413 '{"error":"Request exceeds gateway size limit."}';
+    }
+    location @gateway_unavailable {
+        default_type application/json;
+        add_header Retry-After 5 always;
+        return 503 '{"error":"Application temporarily unavailable."}';
+    }
+    location = /api/auth/login {
+        limit_req zone=schooldesk_login burst=3 nodelay;
+        include /etc/schooldesk/proxy-token.conf;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For "";
+        proxy_pass http://127.0.0.1:8000;
+        proxy_read_timeout 30s;
+    }
+    location / {
+        limit_req zone=schooldesk_general burst=20 nodelay;
+        include /etc/schooldesk/proxy-token.conf;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For "";
+        proxy_pass http://127.0.0.1:8000;
+        proxy_read_timeout 30s;
+    }
+}

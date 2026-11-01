@@ -8,6 +8,7 @@ import accounts
 import app
 import maintenance
 import runtime
+import deployment
 
 
 def main(argv=None):
@@ -32,6 +33,7 @@ def main(argv=None):
             with app.connect() as db:result=runtime.status(db)
             print(json.dumps(result,indent=2,sort_keys=True))
         else:
+            if deployment.cloud() and args.allow_demo:raise ValueError('Demo mode is forbidden in the cloud profile.')
             with app.connect() as db:
                 if not accounts.enabled(db) and not args.allow_demo:
                     raise ValueError('Run python3 schooldesk.py init first, or explicitly choose --allow-demo for fictional data.')

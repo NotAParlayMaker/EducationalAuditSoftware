@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 CODES = frozenset({'account_created','account_disabled','password_reset','login_succeeded',
     'login_failed','login_throttled','session_revoked','sessions_revoked','session_evicted',
     'password_changed','password_change_failed','password_change_throttled',
-    'import_preview','import_committed','export_completed'})
+    'import_preview','import_committed','export_completed','mfa_login_throttled','mfa_policy_enabled','mfa_enrollment_started','mfa_enrollment_failed','mfa_enrollment_throttled','mfa_enabled','mfa_reset','reauthenticated','evidence_scanned','evidence_quarantined'})
 ZERO = '0' * 64
 
 

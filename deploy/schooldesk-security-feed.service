@@ -1,0 +1,15 @@
+[Unit]
+Description=Schooldesk typed security feed for independent collection
+[Service]
+Type=oneshot
+User=schooldesk
+Group=schooldesk-data
+WorkingDirectory=/opt/schooldesk
+EnvironmentFile=/etc/schooldesk/service.env
+ExecStart=/opt/schooldesk/.venv/bin/python security_feed.py /var/lib/schooldesk/security-feed
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/schooldesk/security-feed

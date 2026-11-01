@@ -6,6 +6,9 @@ import tempfile
 import threading
 import accounts
 import app
+import mfa
+from cryptography.fernet import Fernet
+os.environ['SCHOOL_MFA_KEY']=Fernet.generate_key().decode()
 from playwright.sync_api import sync_playwright, expect
 
 with tempfile.TemporaryDirectory() as directory:
@@ -113,10 +116,34 @@ with tempfile.TemporaryDirectory() as directory:
             import json
             payload=json.loads(Path(export.value.path()).read_text())
             assert payload['rows'][0]['tag']=='PIPELINE-1'
+            if not admin.locator('#account-tools').evaluate('node=>node.open'):admin.locator('#account-tools summary').click()
+            admin.locator('#mfa-password').fill('different-fictional-browser-password')
+            admin.get_by_role('button',name='Set up authenticator',exact=True).click()
+            expect(admin.locator('#mfa-secret')).not_to_be_empty()
+            secret=admin.locator('#mfa-secret').inner_text()
+            import time
+            admin.locator('#mfa-code').fill(mfa.totp(secret,int(time.time()//30)))
+            admin.get_by_role('button',name='Confirm MFA',exact=True).click()
+            expect(admin.locator('#mfa-recovery')).to_be_visible()
+            codes=admin.locator('#mfa-recovery-list').inner_text().splitlines()
+            assert len(codes)==8
+            admin.get_by_role('button',name='I saved the codes',exact=True).click()
+            admin.locator('#login-username').fill('admin');admin.locator('#login-password').fill('different-fictional-browser-password');admin.locator('#login-code').fill(codes[0])
+            admin.get_by_role('button',name='Sign in',exact=True).click()
+            expect(admin.locator('#identity')).to_contain_text('Signed in as admin')
+            with app.connect() as db:db.execute('UPDATE sessions SET auth_time=?',(time.time()-301,))
+            admin.get_by_role('button',name='Export first page',exact=True).click()
+            expect(admin.locator('#pipeline-status')).to_contain_text('Fresh authentication required')
+            admin.locator('#account-tools summary').click()
+            admin.locator('#reauth-password').fill('different-fictional-browser-password');admin.locator('#reauth-code').fill(codes[1])
+            admin.get_by_role('button',name='Verify for five minutes',exact=True).click()
+            expect(admin.locator('#security-message')).to_contain_text('Authentication refreshed')
+            with admin.expect_download() as refreshed_export:admin.get_by_role('button',name='Export first page',exact=True).click()
+            assert refreshed_export.value.suggested_filename.endswith('.json')
             admin.get_by_role('button',name='Lock / clear tab',exact=True).click()
             expect(admin.locator('#login-form')).to_be_visible()
             assert not errors,errors
             browser.close()
-            print('PASS: browser sign-in, role workflow, upload/download, verified closure, history, session revocation, password change, admin events, CSV import/deduplication, JSON export, logout; no page errors.')
+            print('PASS: browser sign-in, role workflow, upload/download, verified closure, history, session revocation, password change, admin events, CSV import/deduplication, JSON export, MFA enrollment/recovery, step-up authentication, logout; no page errors.')
     finally:
         server.shutdown();server.server_close();thread.join()

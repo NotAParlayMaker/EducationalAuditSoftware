@@ -44,8 +44,9 @@ request budgets, login throttling, and access checks still apply. Worker limits
 recover after requests finish.
 
 This is local hardening, not a public cloud hosting solution. Keep loopback binding.
-Managed HTTPS, firewall/WAF policy, identity/MFA, secret custody, protected backups,
-and monitoring are still needed before any reviewed network deployment. No cloud
+MFA, encrypted backup tools, and HTTPS gateway/monitoring templates are now included
+in the cloud security runbook; actual provider configuration and verification are
+still needed before any reviewed network deployment. No cloud
 account or infrastructure was configured by this change.
 
 ## Should Schooldesk use a blockchain?

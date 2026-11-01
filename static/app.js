@@ -14,7 +14,7 @@ const canReadModule = key => !signedInUser || signedInUser.role==='administrator
 const tableFields = key => key==='audits'?['area','finding','status','owner','severity','due_date','reviewer']:modules[key].fields;
 let workspaceToken = '', signedInUser = null, sessionGeneration=0, assignmentUsers=[];
 let preparedBatch=null, exportCursor=0;
-async function api(path, options = {}) { const generation=sessionGeneration; options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(generation!==sessionGeneration)throw new Error('Session changed. Request discarded.'); if(response.status===401&&signedInUser&&!['auth/login','auth/change-password'].includes(path))signedOut('Session expired or revoked. Sign in again.'); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
+async function api(path, options = {}) { const generation=sessionGeneration; options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(generation!==sessionGeneration)throw new Error('Session changed. Request discarded.'); if(response.status===401&&signedInUser&&!['auth/login','auth/change-password','auth/reauthenticate','auth/mfa/begin','auth/mfa/confirm'].includes(path))signedOut('Session expired or revoked. Sign in again.'); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
 function cell(tag, text) { const element=document.createElement(tag); element.textContent=text; return element; }
 function drawRows() {
  $('page-label').textContent='Page '+(pageOffset/50+1)+' · search filters this page';$('page-prev').disabled=pageOffset===0;$('page-next').disabled=records.length<50;
@@ -133,14 +133,18 @@ $('lock-workspace').onclick = async () => { try { await api('auth/logout',{metho
 
 $('login-form').onsubmit = async event => {
  event.preventDefault(); const button=event.target.querySelector('button');button.disabled=true;
- const username=$('login-username').value, password=$('login-password').value;$('login-password').value='';
+ const username=$('login-username').value,password=$('login-password').value,code=$('login-code').value;$('login-password').value='';$('login-code').value='';
  try {
- const result=await api('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
- workspaceToken=result.token;signedInUser=result.user;sessionGeneration++;$('security-panel').hidden=false;$('security-admin').hidden=signedInUser.role!=='administrator';$('security-message').textContent='';
+ const result=await api('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,code})});
+ workspaceToken=result.token;signedInUser=result.user;sessionGeneration++;$('security-panel').hidden=false;$('security-admin').hidden=!!result.mfa_setup_required||signedInUser.role!=='administrator';$('security-message').textContent='';
  $('unlock-form').hidden=true;$('login-form').hidden=true;
  // Keep logout reachable after hiding the legacy-token form.
  $('lock-workspace').hidden=false;$('identity').after($('lock-workspace'));
  document.querySelectorAll('nav button').forEach(button=>{button.hidden=!!button.dataset.key&&!canReadModule(button.dataset.key);});
+ $('mfa-recovery').hidden=true;$('mfa-recovery-list').textContent='';
+ for(const id of ['sessions-show','sessions-revoke-all','password-form'])$(id).hidden=!!result.mfa_setup_required;
+ if(result.mfa_setup_required){$('overview').hidden=true;$('module').hidden=true;$('pipeline-panel').hidden=true;$('account-tools').open=true;$('identity').textContent='MFA enrollment required before workspace access.';await loadMFAStatus();return;}
+ await loadMFAStatus();
  assignmentUsers=await api('users');
  setupPipeline();
  await show(null);
@@ -173,9 +177,9 @@ async function auditEvidence(row) {
  if(current!=='audits')return;
  $('evidence-panel')?.remove();const panel=document.createElement('div');panel.id='evidence-panel';panel.className='panel';panel.append(cell('h2','Evidence · audit #'+row.id));
  panel.append(cell('p','Attachments are untrusted. Only fictional UTF-8 text or PDF files up to 256 KiB are accepted; files are downloaded, never embedded. Maximum 20 per finding.'));
- for(const item of items){const description=cell('p',item.filename+' · '+item.size+' bytes · SHA-256 '+item.sha256+' · uploaded by '+item.actor);const download=cell('button','Download');download.type='button';download.onclick=async()=>{
+ for(const item of items){const description=cell('p',item.filename+' · '+item.size+' bytes · SHA-256 '+item.sha256+' · uploaded by '+item.actor+' · scan: '+item.scan_status);const download=cell('button','Download');download.type='button';download.disabled=!item.released;download.onclick=async()=>{
   try {const headers={};if(workspaceToken)headers.Authorization='Bearer '+workspaceToken;const response=await fetch('/api/evidence/'+item.id,{headers});if(!response.ok)throw new Error('Download denied or integrity check failed.');const blob=await response.blob();const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='evidence-'+item.id+(item.media_type==='application/pdf'?'.pdf':'.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){$('error').textContent=error.message;}
- };panel.append(description,download);}
+ };panel.append(description,download);if(signedInUser&&['administrator','auditor'].includes(signedInUser.role)){const rescan=cell('button','Rescan evidence');rescan.type='button';rescan.onclick=async()=>{try{await api('evidence/'+item.id+'/rescan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await show('audits');await auditEvidence(row);}catch(error){$('error').textContent=error.message;}};panel.append(rescan);const reject=cell('button','Reject retained evidence');reject.type='button';reject.onclick=async()=>{const reason=window.prompt('Why should this attachment be rejected and retained?');if(!reason)return;try{await api('evidence/'+item.id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});await show('audits');await auditEvidence(row);}catch(error){$('error').textContent=error.message;}};panel.append(reject);}}
  if(signedInUser&&row.status!=='Closed'){
  const form=document.createElement('form');const label=cell('label','Evidence file');const file=document.createElement('input');file.type='file';file.accept='.txt,.pdf';file.required=true;label.append(file);const submit=cell('button','Upload evidence');submit.type='submit';form.append(label,submit);const status=cell('p','');status.setAttribute('role','status');
  form.onsubmit=async event=>{event.preventDefault();const selected=file.files[0];if(!selected||selected.size>262144){status.textContent='Choose a file of at most 256 KiB.';return;}submit.disabled=true;
@@ -193,7 +197,8 @@ function signedOut(message) {
  $('form').replaceChildren();$('message').textContent='';$('security-verify-status').textContent='';$('cards').replaceChildren();$('rows').replaceChildren();$('sessions-list').replaceChildren();$('security-events').replaceChildren();
  $('evidence-panel')?.remove();$('audit-history')?.remove();
  $('login-form').hidden=false;$('identity').textContent=message;
- for(const id of ['current-password','new-password','confirm-password','login-password'])$(id).value='';
+ $('mfa-enrollment').hidden=true;$('mfa-secret').textContent='';
+ for(const id of ['current-password','new-password','confirm-password','login-password','login-code','mfa-password','mfa-code','reauth-password','reauth-code'])$(id).value='';
  clearDraft();$('assistant-note').value='';
 }
 $('sessions-show').onclick=async()=>{
@@ -292,3 +297,9 @@ $('pipeline-export-next').onclick=()=>{if(exportCursor!==null)exportPipelinePage
 $('pipeline-jobs').onclick=async()=>{
  try{const jobs=await api('pipeline/batches?limit=50');const list=$('pipeline-job-list');list.replaceChildren();for(const job of jobs)list.append(cell('p',modules[job.resource].title+' · '+job.status+' · '+job.row_count+' rows · '+job.inserted+' inserted · '+job.skipped+' skipped · '+new Date(job.created_at*1000).toLocaleString()));if(!jobs.length)list.append(cell('p','No import batches yet.'));}catch(error){$('pipeline-status').textContent=error.message;}
 };
+
+async function loadMFAStatus(){const state=await api('auth/mfa/status');$('mfa-status').textContent=state.enabled?'Authenticator enabled.':state.required?'Authenticator enrollment required.':'Authenticator enrollment is available when the operator configures an encryption key.';$('mfa-begin-form').hidden=state.enabled;}
+$('mfa-begin-form').onsubmit=async event=>{event.preventDefault();const password=$('mfa-password').value;$('mfa-password').value='';try{const result=await api('auth/mfa/begin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});$('mfa-secret').textContent=result.secret;$('mfa-enrollment').hidden=false;}catch(error){$('security-message').textContent=error.message;}};
+$('mfa-confirm-form').onsubmit=async event=>{event.preventDefault();const code=$('mfa-code').value;$('mfa-code').value='';try{const result=await api('auth/mfa/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});signedOut('MFA enabled. Save the recovery codes, then sign in with a new authenticator code.');$('mfa-recovery-list').textContent=result.recovery_codes.join('\n');$('mfa-recovery').hidden=false;}catch(error){$('security-message').textContent=error.message;}};
+$('mfa-recovery-clear').onclick=()=>{$('mfa-recovery-list').textContent='';$('mfa-recovery').hidden=true;};
+$('reauth-form').onsubmit=async event=>{event.preventDefault();const password=$('reauth-password').value,code=$('reauth-code').value;$('reauth-password').value='';$('reauth-code').value='';try{await api('auth/reauthenticate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password,code})});$('security-message').textContent='Authentication refreshed for five minutes. Retry the sensitive action.';}catch(error){$('security-message').textContent=error.message;}};

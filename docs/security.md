@@ -33,7 +33,7 @@ retained; never expose this plain-HTTP prototype publicly.
 
 ## Remaining risks and next work
 
-- Account mode now provides individual accounts, authenticated actors, roles, and reviewer checks. MFA, per-school isolation, and self-service recovery remain future work.
+- Account mode now provides individual accounts, authenticated actors, roles, and reviewer checks. TOTP MFA and recent-auth checks are implemented. Per-school isolation and self-service recovery remain future work.
 - Login throttling is implemented. AI request budgets and a two-call concurrency cap are implemented. A 16-worker HTTP cap is implemented; broader denial-of-service defense and public hosting controls remain future work.
 - Pagination and backup/restore testing are implemented. Encrypted storage,
   retention/deletion policy, and protected security-event logging.
@@ -85,3 +85,5 @@ retention, and incident-response limitations. General HTTP logs remain disabled;
 these typed events do not capture raw request or school-record content.
 
 See [access boundaries](access-boundaries.md) for exact scope, reassignment behavior, and mandatory account-mode defaults.
+
+MFA, evidence quarantine, encrypted backups, and reviewed deployment/monitoring examples are described in [the cloud security runbook](cloud-security-runbook.md). Actual provider rollout remains unconfigured.

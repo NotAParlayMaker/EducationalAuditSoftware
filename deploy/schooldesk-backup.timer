@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily Schooldesk encrypted backup (UTC)
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+[Install]
+WantedBy=timers.target

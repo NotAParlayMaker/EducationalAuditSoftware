@@ -1,4 +1,4 @@
-"""Local school administration and IT workspace. Python 3.12+, no dependencies."""
+"""Local school administration and IT workspace. Python 3.12+; security extras are pinned separately."""
 import json
 import os
 import sqlite3
@@ -8,6 +8,10 @@ import security_events as events
 import operations
 import runtime
 import data_pipeline
+import mfa
+import deployment
+import evidence_scan
+import time
 from urllib.parse import urlsplit, parse_qs
 import hashlib
 import socket
@@ -70,12 +74,13 @@ def connect():
     DB.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     db = sqlite3.connect(DB)
     if os.name == 'posix':
-        DB.chmod(0o600)
+        DB.chmod(0o640 if deployment.cloud() else 0o600)
     db.row_factory = sqlite3.Row
     return db
 
 
 def initialize():
+    deployment.validate()
     token = os.environ.get('SCHOOL_ACCESS_TOKEN')
     if token is not None and (not 32 <= len(token) <= 256 or any(not 33 <= ord(char) <= 126 for char in token)):
         raise ValueError('SCHOOL_ACCESS_TOKEN must contain 32–256 printable ASCII characters without spaces.')
@@ -88,6 +93,10 @@ def initialize():
         operations.initialize(db)
         runtime.initialize(db)
         data_pipeline.initialize(db)
+        policy='all' if deployment.cloud() else ('privileged' if os.environ.get('SCHOOL_REQUIRE_MFA')=='1' else '')
+        prior=db.execute("SELECT value FROM account_settings WHERE key='mfa_required'").fetchone()
+        if policy and (not prior or (prior[0]!='all' and policy=='all')):
+            db.execute("INSERT OR REPLACE INTO account_settings VALUES('mfa_required',?)",(policy,));events.append(db,'mfa_policy_enabled',actor='local-maintenance')
 
 
 def validate(resource, data):
@@ -139,8 +148,10 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as db:
                 self.user = accounts.principal(db, self.headers.get('Authorization', ''))
                 account_mode = accounts.enabled(db)
+            if self.user and self.user.get('_mfa_setup_required') and self.path not in ('/api/auth/mfa/status','/api/auth/mfa/begin','/api/auth/mfa/confirm','/api/auth/logout','/api/auth/reauthenticate'):
+                raise security.RequestError(403,'MFA enrollment is required before accessing workspace data.')
             if not account_mode:
-                if not getattr(self.server,'allow_demo',False):
+                if deployment.cloud() or not getattr(self.server,'allow_demo',False):
                     raise security.RequestError(503,'Account setup required. Run schooldesk.py init or explicitly enable demo mode.')
                 security.check_request(self, write)
             return True
@@ -184,9 +195,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.path.startswith('/api/'):
             try:
                 # Static UI can load before workspace unlock, but host/origin checks still apply.
-                hosts = self.headers.get_all('Host', [])
-                if len(hosts) != 1 or not self.valid_host():
-                    return self.reply(403, {'error': 'Untrusted host'})
+                security.check_request(self,authenticate=False)
                 if self.path not in ('/', '/index.html', '/app.js', '/style.css'):
                     return self.reply(404, {'error': 'Unknown resource'})
                 return super().do_GET()
@@ -195,7 +204,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/auth/status':
             security.check_request(self, authenticate=False)
             with connect() as db:
-                return self.reply(200, {'accounts_enabled': accounts.enabled(db),'demo_enabled':not accounts.enabled(db) and bool(getattr(self.server,'allow_demo',False))})
+                return self.reply(200, {'accounts_enabled': accounts.enabled(db),'demo_enabled':not deployment.cloud() and not accounts.enabled(db) and bool(getattr(self.server,'allow_demo',False))})
         if not self.guard():
             return
         if self.path.split('?')[0]=='/api/pipeline/batches':
@@ -204,6 +213,10 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as db:
                 rows=[dict(row) for row in db.execute("SELECT id,resource,CASE WHEN status='prepared' AND expires_at<unixepoch() THEN 'expired' ELSE status END AS status,row_count,inserted,skipped,created_at,expires_at FROM pipeline_batches WHERE actor=? ORDER BY created_at DESC LIMIT ? OFFSET ?",(self.user['username'],limit,offset))]
             return self.reply(200,rows)
+        if self.path=='/api/auth/mfa/status':
+            if not self.user:raise security.RequestError(403,'Individual account required.')
+            with connect() as db:
+                return self.reply(200,{'enabled':mfa.active(db,self.user['username']),'required':mfa.required(self.user,db)})
         if self.path=='/api/work-queue':
             with connect() as db:return self.reply(200,runtime.work_queue(db,self.user))
         if self.path=='/api/operations/status':
@@ -224,7 +237,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows=[dict(row) for row in db.execute('SELECT * FROM security_events ORDER BY id DESC LIMIT ? OFFSET ?',(limit,offset))]
             return self.reply(200,rows)
         if self.path == '/api/auth/me':
-            return self.reply(200, {'user': self.user})
+            return self.reply(200, {'user': {key:self.user[key] for key in ('username','role')} if self.user else None})
         if self.path == '/api/summary':
             with connect() as db:
                 keys = [key for key in SCHEMAS if accounts.can_read_resource(self.user,key)]
@@ -253,6 +266,7 @@ class Handler(SimpleHTTPRequestHandler):
                 row=db.execute('SELECT e.* FROM audit_evidence e JOIN audits a ON a.id=e.audit_id WHERE e.id=? AND ('+scope+')',[int(parts[2])]+params).fetchone()
             if not row:
                 return self.reply(404,{'error':'Evidence not found.'})
+            if not evidence_scan.released(row['scan_status']):return self.reply(423,{'error':'Evidence is quarantined or requires a clean scan.'})
             if hashlib.sha256(row['content']).hexdigest()!=row['sha256']:
                 return self.reply(409,{'error':'Evidence integrity check failed.'})
             self.send_response(200)
@@ -263,7 +277,8 @@ class Handler(SimpleHTTPRequestHandler):
         if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
             with connect() as db:
                 accounts.require_audit_access(db,self.user,int(parts[2]))
-                rows=[dict(row) for row in db.execute('SELECT id,audit_id,filename,media_type,sha256,size,actor,created_at FROM audit_evidence WHERE audit_id=? ORDER BY id DESC LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
+                rows=[dict(row) for row in db.execute('SELECT id,audit_id,filename,media_type,sha256,size,actor,created_at,scan_status FROM audit_evidence WHERE audit_id=? ORDER BY id DESC LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
+            for row in rows:row['released']=evidence_scan.released(row['scan_status'])
             return self.reply(200,rows)
         if len(parts) == 4 and parts[:2] == ['api', 'audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2]) <= 18 and parts[3] == 'history':
             with connect() as db:
@@ -293,7 +308,21 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(200, result)
         if not self.guard(write=True):
             return
+        if self.path in ('/api/auth/reauthenticate','/api/auth/mfa/begin','/api/auth/mfa/confirm'):
+            data=security.read_json(self)
+            with connect() as db:
+                if self.path=='/api/auth/reauthenticate':
+                    accounts.reauthenticate(db,self.user,self.headers.get('Authorization',''),data);result={'verified':True}
+                elif self.path=='/api/auth/mfa/begin':
+                    if set(data)!={'password'}:raise security.RequestError(400,'Supply the current password.')
+                    accounts.reauthenticate(db,self.user,self.headers.get('Authorization',''),data)
+                    self.user['_auth_time']=time.time();result=mfa.begin(db,self.user)
+                else:
+                    if set(data)!={'code'}:raise security.RequestError(400,'Supply the enrollment code.')
+                    result=mfa.confirm(db,self.user,data['code'])
+            return self.reply(200,result)
         if self.path in ('/api/pipeline/preview','/api/pipeline/commit','/api/pipeline/export'):
+            if self.path in ('/api/pipeline/commit','/api/pipeline/export'):mfa.require_recent(self.user)
             data=security.read_json(self,maximum=512000)
             with connect() as db:
                 if self.path=='/api/pipeline/preview':
@@ -316,15 +345,49 @@ class Handler(SimpleHTTPRequestHandler):
                     if data:raise security.RequestError(400,'Unexpected fields.')
                     accounts.revoke_sessions(db,self.user)
                 else:
+                    mfa.require_recent(self.user)
                     accounts.change_password(db,self.user,data)
             return self.reply(200,{'completed':True})
         parts = self.path.strip('/').split('/')
+        if len(parts)==4 and parts[:2]==['api','evidence'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3] in ('rescan','reject'):
+            if not self.user or self.user['role'] not in ('administrator','auditor'):raise security.RequestError(403,'Oversight role required.')
+            mfa.require_recent(self.user)
+            action_data=security.read_json(self)
+            if parts[3]=='rescan' and action_data:raise security.RequestError(400,'Unexpected fields.')
+            if parts[3]=='reject' and (set(action_data)!={'reason'} or not isinstance(action_data['reason'],str) or not 1<=len(action_data['reason'].strip())<=500):raise security.RequestError(400,'Supply a rejection reason of 1–500 characters.')
+            with connect() as db:
+                row=db.execute('SELECT * FROM audit_evidence WHERE id=?',(int(parts[2]),)).fetchone()
+                if not row:raise security.RequestError(404,'Evidence not found.')
+                parent=accounts.require_audit_access(db,self.user,row['audit_id'])
+                if row['scan_status']=='rejected':raise security.RequestError(409,'Rejected evidence is retained and cannot be released.')
+                if parts[3]=='reject' and parent['status']=='Closed':raise security.RequestError(409,'Reopen the finding before rejecting evidence.')
+            if parts[3]=='rescan' and not evidence_scan.required():raise security.RequestError(409,'Configure an active scanner before rescanning.')
+            intact=isinstance(row['content'],bytes) and hashlib.sha256(row['content']).hexdigest()==row['sha256'] and len(row['content'])==row['size']
+            status='rejected' if parts[3]=='reject' else (evidence_scan.scan(row['content']) if intact else 'integrity_failed')
+            with connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                current=db.execute('SELECT * FROM audit_evidence WHERE id=?',(row['id'],)).fetchone()
+                if not current or current['content']!=row['content'] or current['sha256']!=row['sha256'] or current['scan_status']!=row['scan_status']:raise security.RequestError(409,'Evidence changed during scanning. Retry after review.')
+                parent=accounts.require_audit_access(db,self.user,current['audit_id'])
+                if parts[3]=='reject' and parent['status']=='Closed':raise security.RequestError(409,'Reopen the finding before rejecting evidence.')
+                db.execute('UPDATE audit_evidence SET scan_status=? WHERE id=?',(status,row['id']))
+                audit=dict(parent);audit['revision']+=1
+                if audit['status']=='Closed' and not evidence_scan.released(status):
+                    audit.update(status='Open',reopen_reason='Evidence quarantined after rescan.',verification='',closure_reason='')
+                    db.execute("UPDATE audits SET status='Open',reopen_reason=?,verification='',closure_reason='' WHERE id=?",(audit['reopen_reason'],audit['id']))
+                db.execute('UPDATE audits SET revision=? WHERE id=?',(audit['revision'],audit['id']))
+                audits.record_event(db,dict(audit,attachment_rescanned=row['id'],scan_status=status,rejection_reason=action_data.get('reason','')),self.user['username'])
+                events.append(db,'evidence_scanned' if status=='clean' else 'evidence_quarantined',actor=self.user['username'])
+            return self.reply(200,{'scan_status':status,'released':evidence_scan.released(status)})
         if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
             data=security.read_json(self,maximum=360000)
+            with connect() as db:operations.authorize_upload(db,self.user,int(parts[2]))
+            _,content,_,_=operations.validate_upload(data)
+            scan_result=evidence_scan.scan(content)
             with connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 try:
-                    result=operations.add_evidence(db,self.user,int(parts[2]),data)
+                    result=operations.add_evidence(db,self.user,int(parts[2]),data,scan_result=scan_result)
                 except LookupError:
                     return self.reply(404,{'error':'Audit not found.'})
             return self.reply(201,result)
@@ -393,6 +456,10 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 data = accounts.authorize_audit(db, self.user, data, int(parts[2]))
+                previous=db.execute('SELECT status FROM audits WHERE id=?',(int(parts[2]),)).fetchone()
+                next_status=data.get('status',previous['status'])
+                if next_status=='Closed':mfa.require_recent(self.user)
+                if next_status in ('Awaiting verification','Closed'):operations.verify_attachments(db,int(parts[2]))
                 record = audits.save(db, data, int(parts[2]))
             return self.reply(200, record)
         except audits.Conflict as error:

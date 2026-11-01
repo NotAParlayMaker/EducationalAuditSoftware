@@ -1,0 +1,29 @@
+[Unit]
+Description=Schooldesk restricted application service
+After=network.target clamav-daemon.service
+Requires=clamav-daemon.service
+[Service]
+Type=simple
+User=schooldesk
+Group=schooldesk-data
+SupplementaryGroups=schooldesk clamav
+WorkingDirectory=/opt/schooldesk
+EnvironmentFile=/etc/schooldesk/service.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/schooldesk/.venv/bin/python schooldesk.py serve
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/schooldesk
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+RestrictSUIDSGID=true
+IPAddressDeny=any
+IPAddressAllow=localhost
+[Install]
+WantedBy=multi-user.target

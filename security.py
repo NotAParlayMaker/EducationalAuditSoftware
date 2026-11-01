@@ -2,6 +2,7 @@
 import hmac
 import json
 import os
+import deployment
 
 
 class RequestError(ValueError):
@@ -12,11 +13,12 @@ class RequestError(ValueError):
 
 def check_request(handler, write=False, authenticate=True):
     hosts = handler.headers.get_all('Host', [])
-    allowed = {f'127.0.0.1:{handler.server.server_port}', f'localhost:{handler.server.server_port}'}
+    trusted=deployment.gateway(handler)
+    allowed={trusted[0]} if trusted else {f'127.0.0.1:{handler.server.server_port}',f'localhost:{handler.server.server_port}'}
     if len(hosts) != 1 or hosts[0] not in allowed:
         raise RequestError(403, 'Untrusted host')
     origin = handler.headers.get('Origin')
-    if origin and origin != 'http://' + hosts[0]:
+    if origin and origin != (trusted[1] if trusted else 'http://' + hosts[0]):
         raise RequestError(403, 'Cross-origin request rejected')
     if handler.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none'):
         raise RequestError(403, 'Cross-site request rejected')
