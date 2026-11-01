@@ -83,7 +83,12 @@ def login(db, data, now=None, issue_session=True):
     db.execute('BEGIN IMMEDIATE')
     db.execute('DELETE FROM login_user_budget WHERE updated_at<?',(now-86400,))
     budget=db.execute('SELECT * FROM login_user_budget WHERE identity=?',(identity,)).fetchone()
-    if budget and budget['next_attempt']>now:
+    backoff=bool(budget and budget['next_attempt']>now)
+    factor_candidate=isinstance(data.get('code'),str) and re.fullmatch(r'(?:[0-9]{6}|recovery-[a-f0-9]{32})',data['code'])
+    # A username alone must not prevent its owner using both authentication
+    # factors. Candidate codes still incur the global CPU ceiling and the
+    # existing MFA guessing budget after password verification.
+    if backoff and not factor_candidate:
         db.commit()
         raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
     row = db.execute('SELECT * FROM login_budget WHERE id=1').fetchone()
@@ -101,24 +106,30 @@ def login(db, data, now=None, issue_session=True):
     candidate = password_hash(password, salt)
     expected = row['password_hash'] if row else '00' * 32
     if not hmac.compare_digest(candidate, expected) or not row or not row['active']:
-        login_failure(db,identity,now)
+        if not backoff:login_failure(db,identity,now)
         events.append(db,'login_failed')
         db.commit()
+        if backoff:raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
         raise RequestError(401, 'Invalid username or password.')
     # Recheck after password hashing so a concurrent reset/disable cannot issue a
     # fresh session from credentials that have just been revoked.
     db.execute('BEGIN IMMEDIATE')
     fresh=db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
     if not fresh or not fresh['active'] or fresh['password_hash']!=expected:
-        login_failure(db,identity,now)
+        if not backoff:login_failure(db,identity,now)
         events.append(db,'login_failed')
         db.commit()
+        if backoff:raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
         raise RequestError(401,'Invalid username or password.')
     row=fresh
+    if backoff and not mfa.active(db,username):
+        db.commit()
+        raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
     verified=False
     if mfa.active(db,username):
         if not mfa.login_factor(db,username,data.get('code',''),now):
             events.append(db,'login_failed');db.commit()
+            if backoff:raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
             raise RequestError(401,'Invalid username or password.')
         verified=True
     db.execute('DELETE FROM login_user_budget WHERE identity=?',(identity,))

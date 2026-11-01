@@ -1,5 +1,9 @@
 # Security audit response and upgrade steps
 
+The [availability and dependency follow-up](security-follow-up.md) updates the
+backoff behavior, connection deadline, HSTS, dependency hashes, and observed
+repository-rules status below.
+
 The local OS account, database operator, service identity, and host administrator
 remain trusted. Loopback restricts network reachability; it does not authenticate
 local software. Never use fictional-data demo mode for real school records.

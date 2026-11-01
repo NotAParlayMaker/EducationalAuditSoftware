@@ -8,7 +8,7 @@ Requires Python 3.12 or newer. From this repository:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install --only-binary=:all: -r requirements-security.txt
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-security.txt
 .venv/bin/python schooldesk.py init
 .venv/bin/python schooldesk.py serve
 ```
@@ -328,3 +328,7 @@ messages are provisioned automatically. Read [the cloud security runbook](docs/c
 for setup, recovery, key custody, dependency installation, and release gates.
 
 See [the security audit response and upgrade steps](docs/security-audit-response.md) for the event-key migration, registrar role change, required demo token, host-encryption attestation, and repository-owner settings. Cloud profile requires offline AI.
+
+See [the availability and dependency follow-up](docs/security-follow-up.md) for
+MFA recovery during targeted backoff, the fifteen-second connection deadline,
+hash-verified installation, and the repository ruleset owner action.

@@ -27,9 +27,12 @@ class ThreadingHTTPServer(BaseHTTPServer):
     daemon_threads=True
     block_on_close=False
     worker_limit=16
+    request_deadline=15
 
     def __init__(self,*args,**kwargs):
         self.worker_slots=threading.BoundedSemaphore(self.worker_limit)
+        self.deadline_lock=threading.Lock()
+        self.deadlines={}
         self.demo_token=os.environ.get('SCHOOL_ACCESS_TOKEN') or secrets.token_urlsafe(32)
         super().__init__(*args,**kwargs)
 
@@ -43,14 +46,42 @@ class ThreadingHTTPServer(BaseHTTPServer):
             except OSError:pass
             self.shutdown_request(request)
             return
-        try:super().process_request(request,client_address)
+        timer=threading.Timer(self.request_deadline,self.expire_request,args=(request,))
+        timer.daemon=True
+        with self.deadline_lock:self.deadlines[request]=timer
+        try:
+            timer.start()
+            super().process_request(request,client_address)
         except Exception:
+            self.cancel_deadline(request)
             self.worker_slots.release()
             raise
 
+    @staticmethod
+    def expire_request(request):
+        # Interrupt a blocked buffered read/write even when bytes keep arriving.
+        # settimeout alone only bounds the idle time of each socket operation.
+        try:request.shutdown(socket.SHUT_RDWR)
+        except OSError:pass
+
+    def cancel_deadline(self,request):
+        with self.deadline_lock:timer=self.deadlines.pop(request,None)
+        if timer:
+            timer.cancel()
+            # Reap the timer before returning the worker slot, so rapid completed
+            # requests cannot accumulate pending timer threads.
+            if timer.is_alive():timer.join()
+
     def process_request_thread(self,request,client_address):
         try:super().process_request_thread(request,client_address)
-        finally:self.worker_slots.release()
+        finally:
+            self.cancel_deadline(request)
+            self.worker_slots.release()
+
+    def handle_error(self,request,client_address):
+        import sys
+        if isinstance(sys.exc_info()[1],(BrokenPipeError,ConnectionResetError,TimeoutError)):return
+        super().handle_error(request,client_address)
 
 
 ROOT = Path(__file__).parent

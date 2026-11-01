@@ -15,7 +15,9 @@ server {
     ssl_certificate_key /etc/schooldesk/tls/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_tickets off;
-    add_header Strict-Transport-Security "max-age=86400" always;
+    # Enable a one-year policy only after validating HTTPS, certificate renewal,
+    # and recovery for this host. No includeSubDomains or preload opt-in.
+    add_header Strict-Transport-Security "max-age=31536000" always;
     server_tokens off;
     access_log off;
     error_log /var/log/nginx/schooldesk-error.log crit;
@@ -32,6 +34,7 @@ server {
     limit_conn schooldesk_connections 10;
     location @rate_limited {
         default_type application/json;
+        add_header Strict-Transport-Security "max-age=31536000" always;
         add_header Retry-After 60 always;
         return 429 '{"error":"Gateway rate limit reached. Retry later."}';
     }
@@ -41,6 +44,7 @@ server {
     }
     location @gateway_unavailable {
         default_type application/json;
+        add_header Strict-Transport-Security "max-age=31536000" always;
         add_header Retry-After 5 always;
         return 503 '{"error":"Application temporarily unavailable."}';
     }

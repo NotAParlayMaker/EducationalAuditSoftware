@@ -11,7 +11,7 @@ jobs:
       - name: Install pinned security dependencies
         run: |
           python3 -m venv .ci-venv
-          .ci-venv/bin/python -m pip install --only-binary=:all: -r requirements-security.txt
+          .ci-venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-security.txt
       - name: Run offline regression and security tests
         run: .ci-venv/bin/python -m unittest discover -s tests -v
       - name: Check Python and JavaScript syntax
