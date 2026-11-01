@@ -30,8 +30,8 @@ def initialize(db):
 
 
 def writer(user,resource,schemas):
-    if not user or user['role'] not in ('administrator','auditor'):
-        raise RequestError(403,'Only signed-in administrators or auditors can import records.')
+    if not user or user['role'] not in ('administrator','registrar','auditor'):
+        raise RequestError(403,'A role authorized for this resource is required to import records.')
     if resource not in schemas:
         raise RequestError(400,'Unsupported resource.')
     accounts.authorize_resource(user,resource,write=True)
@@ -86,7 +86,7 @@ def parse_source(source,schemas):
 
 
 def normalize(user,source,validator,schemas,db,check_assignments=True):
-    if not user or user['role'] not in ('administrator','auditor'):raise RequestError(403,'Import access required.')
+    if not user or user['role'] not in ('administrator','registrar','auditor'):raise RequestError(403,'Import access required.')
     resource,rows=parse_source(source,schemas)
     writer(user,resource,schemas)
     clean=[];errors=[]
@@ -152,7 +152,7 @@ def preview(db,user,source,validator,schemas):
 def commit(db,user,data,validator,schemas):
     if not isinstance(data,dict) or set(data)!={'batch_id','digest','source'} or not isinstance(data['batch_id'],str) or len(data['batch_id'])>64:
         raise RequestError(400,'Supply batch ID, preview digest, and source.')
-    if not user or user['role'] not in ('administrator','auditor'):raise RequestError(403,'Import access required.')
+    if not user or user['role'] not in ('administrator','registrar','auditor'):raise RequestError(403,'Import access required.')
     db.execute('BEGIN IMMEDIATE')
     batch=db.execute('SELECT * FROM pipeline_batches WHERE id=? AND actor=?',(data['batch_id'],user['username'])).fetchone()
     if not batch:raise RequestError(404,'Batch not found.')

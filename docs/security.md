@@ -8,7 +8,7 @@ hosting configuration, a penetration-test certification, or a compliance claim.
 | Boundary | Threat | Defense |
 |---|---|---|
 | Browser to local server | CSRF, cross-site access, DNS rebinding | Exact single Host allowlist; same-origin Origin and Fetch Metadata checks; custom write header; strict JSON content type; no CORS opt-in |
-| API access | Unauthorized local requests | Optional high-entropy shared bearer token on all API routes; constant-time comparison; in-memory browser token |
+| API access | Unauthorized local requests | Mandatory high-entropy demo token or an individual account session on protected routes; constant-time comparison; in-memory browser token |
 | Rendering | Stored script injection, framing, resource injection | Existing text-only rendering; CSP; frame denial; no-sniff; no-referrer |
 | Files | Arbitrary file reads and directory listings | Explicit UI path allowlist; HEAD disabled |
 | Parsing | Large, ambiguous, malformed, or stalled bodies | Size/length checks; duplicate-key rejection; object-only JSON; finite constants; read timeout |
@@ -19,7 +19,7 @@ hosting configuration, a penetration-test certification, or a compliance claim.
 ## Operational requirements
 
 Set a randomly generated `SCHOOL_ACCESS_TOKEN` through a protected server environment
-before enabling the optional access gate. Do not paste it in a URL or commit it.
+to choose a stable demo token; otherwise startup generates one. Do not paste it in a URL or commit it.
 Protect the machine, application source, parent directories, database, and backups.
 Changing the variable and restarting rotates the token. Locking the browser tab
 clears its in-memory state; it does not revoke a copied token at the server.
@@ -28,7 +28,7 @@ For unprovisioned databases, protected APIs are closed unless demo mode is expli
 and reviewer typed into forms can still impersonate one another. All token holders
 have the same API access. Same-origin script compromise or malicious browser
 extensions can act with the user's access. Local processes can reach the service,
-and explicit demos without a configured token have no credential gate. Loopback binding is
+and must present a demo token or individual account credentials. Loopback binding is
 retained; never expose this plain-HTTP prototype publicly.
 
 ## Remaining risks and next work
@@ -58,7 +58,7 @@ account session; the shared token is ignored. Passwords are salted PBKDF2 hashes
 sessions are stored as SHA-256 token digests, and expiry and active-account checks
 run on every request. The public auth status endpoint exposes only whether account
 mode is enabled. Sign-in retains the same browser/JSON request controls and a
-persistent ten-attempt-per-minute global budget. Account names and roles are
+per-identity exponential backoff and a 120-attempt-per-minute global backstop. Account names and roles are
 available to signed-in users for assignment; password material is never exposed.
 
 The authenticated username overrides client-supplied audit actor values. Server-side
@@ -92,3 +92,5 @@ Audit input fields are normalized before authorization and lifecycle checks.
 Whitespace around a status cannot bypass fresh authentication, attachment
 verification, or the requirement to save the independent reviewer assignment
 before closure. Rejected updates leave the finding and its revision unchanged.
+
+Current changes and operator prerequisites: [security audit response](security-audit-response.md). IT administrators no longer have student-record access; provision registrars before upgrading.

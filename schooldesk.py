@@ -17,6 +17,7 @@ def main(argv=None):
     parser.add_argument('--username',default='school-admin',help='first administrator username for init')
     parser.add_argument('--allow-demo',action='store_true',help='explicitly allow serving without individual accounts')
     parser.add_argument('--port',type=int,default=None)
+    parser.add_argument('--revoke-sessions',action='store_true',help='revoke every existing account session before serving')
     args=parser.parse_args(argv)
     try:
         app.initialize()
@@ -27,10 +28,12 @@ def main(argv=None):
                 password=getpass.getpass('Administrator password (14–256 characters): ')
                 if password!=getpass.getpass('Confirm password: '):raise ValueError('Passwords differ.')
                 accounts.create_user(db,args.username,'administrator',password)
-            print('Administrator created. Add auditor, remediation_owner, and reviewer accounts with manage.py, then run schooldesk.py doctor.')
+            print('IT administrator created. Add a registrar for student records, plus auditor, remediation_owner, and reviewer accounts with manage.py, then run schooldesk.py doctor.')
         elif args.command=='doctor':
             maintenance.verify(app.DB)
             with app.connect() as db:result=runtime.status(db)
+            import security_events
+            security_events.audit_cli('cli_doctor')
             print(json.dumps(result,indent=2,sort_keys=True))
         else:
             if deployment.cloud() and args.allow_demo:raise ValueError('Demo mode is forbidden in the cloud profile.')
@@ -43,6 +46,16 @@ def main(argv=None):
             if not 1<=port<=65535:raise ValueError('Port must be 1–65535.')
             server=app.ThreadingHTTPServer(('127.0.0.1',port),app.Handler)
             server.allow_demo=args.allow_demo
+            import security_events
+            security_events.audit_cli('cli_server_started')
+            if args.revoke_sessions or os.environ.get('SCHOOL_REVOKE_SESSIONS_ON_START')=='1':
+                with app.connect() as db:
+                    db.execute('DELETE FROM sessions')
+                    import security_events
+                    security_events.append(db,'startup_sessions_revoked',actor='local-maintenance')
+            if args.allow_demo:
+                with app.connect() as db:demo=not accounts.enabled(db)
+                if demo:print('Private demo unlock token (do not share or save in logs): '+server.demo_token,flush=True)
             print(f'Schooldesk ready at http://127.0.0.1:{port}',flush=True)
             try:server.serve_forever()
             except KeyboardInterrupt:pass

@@ -41,7 +41,7 @@ contents, raw paths, network addresses, and browser fingerprints are excluded.
 Account handles themselves are sensitive operational metadata; restrict database,
 backup, and event-viewer access accordingly.
 
-Ordinary login failures are recorded within the ten-attempt-per-minute budget.
+Ordinary login failures are recorded within the 120-attempt-per-minute global backstop and per-identity exponential backoff.
 Repeated throttle requests add at most one throttle marker per budget window,
 preventing unlimited event creation from that response. Password attempts likewise
 record one throttle marker per exhausted per-account window. Malformed requests,
@@ -56,7 +56,9 @@ viewer checks internal continuity and hashes. There is no network API for modify
 or deleting events. This is append-only through the application, not tamper-proof
 against direct filesystem/database access.
 
-A database writer could truncate the tail or rewrite the entire unkeyed chain.
+A database writer could truncate the tail or rewrite an unkeyed chain. With the
+external-key HMAC policy, rewriting requires the signing key; detecting a valid
+prefix truncation still requires an independently retained later checkpoint.
 Detect this by preserving a checkpoint independently before an incident:
 
 ```sh
@@ -94,3 +96,5 @@ password rotation and throttling, ten-session limits, credential-reset races,
 session schema migration, transactional rollback, edits and tail truncation relative
 to a checkpoint. The optional browser test covers session controls, password change,
 administrator history, and the full audit workflow using a temporary synthetic DB.
+
+An external-key HMAC chain, explicit legacy sealing, automatic backup checkpoints, idle session expiry, and additional CLI events are described in [the security audit response](security-audit-response.md). That document supersedes earlier unkeyed-chain and optional-checkpoint deployment assumptions.

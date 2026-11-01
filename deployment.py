@@ -38,10 +38,14 @@ def validate():
     if os.environ.get('SCHOOL_PROFILE','local') not in ('local','cloud'):raise ValueError('SCHOOL_PROFILE must be local or cloud.')
     if os.environ.get('SCHOOL_EVIDENCE_SCAN','disabled') not in ('disabled','clamd'):raise ValueError('Unsupported evidence scanning mode.')
     if not cloud():return
+    if os.environ.get('SCHOOL_AI_MODE','offline')!='offline':raise ValueError('Cloud profile requires offline AI until a reviewed de-identification workflow is available.')
     public_origin()
     if hasattr(os,'geteuid') and os.geteuid()==0:raise ValueError('The cloud request service must run as a non-root user.')
     token=secret_config.read('SCHOOL_PROXY_TOKEN',required=True)
     if not re.fullmatch(r'[A-Za-z0-9_-]{32,128}',token):raise ValueError('Gateway token must contain at least 32 ASCII characters.')
     secret_config.fernet('SCHOOL_MFA_KEY')
+    import security_events
+    if not security_events.signing_key():raise ValueError('Cloud profile requires an external SCHOOL_EVENT_KEY.')
+    if os.environ.get('SCHOOL_ENCRYPTED_STORAGE_ACK')!='1':raise ValueError('Verify encrypted host and temporary storage, then set SCHOOL_ENCRYPTED_STORAGE_ACK=1. This is an operator attestation, not automatic verification.')
     if os.environ.get('SCHOOL_BACKUP_KEY') or os.environ.get('SCHOOL_BACKUP_KEY_FILE'):raise ValueError('Backup keys belong to the separate backup worker, not the application service.')
     if os.environ.get('SCHOOL_EVIDENCE_SCAN')!='clamd' or not os.environ.get('SCHOOL_CLAMD_SOCKET'):raise ValueError('Cloud profile requires a configured clamd scanner.')

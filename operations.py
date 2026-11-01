@@ -81,9 +81,11 @@ def validate_upload(data):
             raise RequestError(400,'Text evidence must be UTF-8 without binary control characters.') from None
         media_type='text/plain'
     elif filename.lower().endswith('.pdf') and content.startswith(b'%PDF-'):
+        if os.environ.get('SCHOOL_ALLOW_PDF_EVIDENCE')!='1' or not evidence_scan.required():
+            raise RequestError(400,'PDF evidence is disabled. Use UTF-8 text; PDF opt-in requires malware scanning.')
         media_type='application/pdf'
     else:
-        raise RequestError(400,'Only UTF-8 .txt and PDF-signature .pdf evidence is accepted.')
+        raise RequestError(400,'Use UTF-8 .txt evidence. PDF evidence requires explicit opt-in and malware scanning.')
     checksum=hashlib.sha256(content).hexdigest()
     return filename,content,media_type,checksum
 
@@ -104,7 +106,7 @@ def add_evidence(db,user,audit_id,data,scan_result=None):
     snapshot=dict(row)
     snapshot.update(revision=revision,attachment_added=cursor.lastrowid,attachment_sha256=checksum)
     audit_workflow.record_event(db,snapshot,user['username'])
-    return {'id':cursor.lastrowid,'filename':filename,'sha256':checksum,'size':len(content),'audit_revision':revision,'scan_status':scan_status,'released':evidence_scan.released(scan_status)}
+    return {'id':cursor.lastrowid,'filename':filename,'sha256':checksum,'size':len(content),'audit_revision':revision,'scan_status':scan_status,'released':evidence_scan.released(scan_status,media_type)}
 
 
 def page_query(query):
@@ -131,6 +133,6 @@ def audit_filters(query):
 
 
 def verify_attachments(db,audit_id):
-    for row in db.execute("SELECT content,sha256,size,scan_status FROM audit_evidence WHERE audit_id=? AND scan_status<>'rejected'",(audit_id,)):
-        if not evidence_scan.released(row['scan_status']) or not isinstance(row['content'],bytes) or hashlib.sha256(row['content']).hexdigest()!=row['sha256'] or len(row['content'])!=row['size']:
+    for row in db.execute("SELECT content,sha256,size,scan_status,media_type FROM audit_evidence WHERE audit_id=? AND scan_status<>'rejected'",(audit_id,)):
+        if not evidence_scan.released(row['scan_status'],row['media_type']) or not isinstance(row['content'],bytes) or hashlib.sha256(row['content']).hexdigest()!=row['sha256'] or len(row['content'])!=row['size']:
             raise RequestError(423,'All active evidence must pass integrity and scanning checks before verification or closure.')

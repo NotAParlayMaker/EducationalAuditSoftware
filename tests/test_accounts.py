@@ -21,7 +21,7 @@ class AccountHTTPTest(unittest.TestCase):
         app.DB = Path(cls.temp.name) / 'accounts.db'
         app.initialize()
         with app.connect() as db:
-            for name, role in [('admin','administrator'),('auditor','auditor'),('owner','remediation_owner'),('reviewer','reviewer')]:
+            for name, role in [('admin','administrator'),('registrar','registrar'),('auditor','auditor'),('owner','remediation_owner'),('reviewer','reviewer')]:
                 accounts.create_user(db,name,role,'fictional-password-for-tests')
         cls.server=app.ThreadingHTTPServer(('127.0.0.1',0), app.Handler)
         cls.thread=threading.Thread(target=cls.server.serve_forever,daemon=True)
@@ -36,7 +36,7 @@ class AccountHTTPTest(unittest.TestCase):
 
     def setUp(self):
         with app.connect() as db:
-            db.execute('DELETE FROM login_budget')
+            db.execute('DELETE FROM login_budget');db.execute('DELETE FROM login_user_budget')
             db.execute('DELETE FROM sessions')
             db.execute('UPDATE users SET active=1')
 
@@ -82,14 +82,14 @@ class AccountHTTPTest(unittest.TestCase):
             self.denied(403,'attendance',token=token)
             self.denied(403,'grades',token=token)
             self.denied(403,'assets',{},token=token)
-        self.assertIsInstance(self.call('students',token=self.login('admin')),list)
+        self.assertIsInstance(self.call('students',token=self.login('registrar')),list)
 
     def test_login_throttling_and_generic_errors(self):
         with app.connect() as db:
             # Prime the budget without performing ten expensive password hashes.
-            db.execute('INSERT INTO login_budget VALUES(1,?,10)',(accounts.time.time(),))
+            db.execute('INSERT INTO login_budget VALUES(1,?,120)',(accounts.time.time(),))
         self.denied(429,'auth/login',{'username':'admin','password':'invalid'})
-        with app.connect() as db: db.execute('DELETE FROM login_budget')
+        with app.connect() as db: db.execute('DELETE FROM login_budget');db.execute('DELETE FROM login_user_budget')
         for name in ('admin','unknown-user'):
             with self.assertRaises(HTTPError) as caught:
                 self.call('auth/login',{'username':name,'password':'incorrect'})

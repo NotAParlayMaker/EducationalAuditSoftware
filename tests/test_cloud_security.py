@@ -64,7 +64,7 @@ class MFAHTTPTest(unittest.TestCase):
             recovery=confirmed['recovery_codes'][0]
             fresh=self.call('auth/login',{'username':'admin','password':'fictional-password-for-tests','code':recovery})
             self.assertFalse(fresh['mfa_setup_required'])
-            self.assertIsInstance(self.call('students',token=fresh['token']),list)
+            self.assertIsInstance(self.call('assets',token=fresh['token']),list)
             self.assertEqual(set(self.call('auth/me',token=fresh['token'])['user']),{'username','role'})
             self.denied(401,'auth/login',{'username':'admin','password':'fictional-password-for-tests','code':recovery})
 
@@ -85,7 +85,7 @@ class MFAHTTPTest(unittest.TestCase):
     def test_sensitive_export_requires_step_up_without_extra_sessions(self):
         token=self.login('admin')
         with app.connect() as db:db.execute('UPDATE sessions SET auth_time=?',(time.time()-301,))
-        payload={'resource':'students','format':'json','after_id':0,'limit':10}
+        payload={'resource':'assets','format':'json','after_id':0,'limit':10}
         self.denied(428,'pipeline/export',payload,token=token)
         self.call('auth/reauthenticate',{'password':'fictional-password-for-tests'},token=token)
         self.assertEqual(self.call('pipeline/export',payload,token=token)['rows'],[])
@@ -224,13 +224,13 @@ class GatewayAndSecretsTest(unittest.TestCase):
             for role in accounts.ROLES:self.assertTrue(mfa.required({'role':role}))
 
     def test_cloud_gateway_rejects_direct_and_forged_origins(self):
-        with patch.dict(os.environ,{'SCHOOL_PROFILE':'cloud','SCHOOL_PUBLIC_ORIGIN':'https://schooldesk.example.invalid','SCHOOL_PROXY_TOKEN':'x'*40}):
+        with patch.dict(os.environ,{'SCHOOL_EVENT_KEY':'a'*64,'SCHOOL_ENCRYPTED_STORAGE_ACK':'1','SCHOOL_PROFILE':'cloud','SCHOOL_PUBLIC_ORIGIN':'https://schooldesk.example.invalid','SCHOOL_PROXY_TOKEN':'x'*40}):
             security.check_request(self.handler(),write=True,authenticate=False)
             for handler in (self.handler(token='wrong'),self.handler(origin='http://schooldesk.example.invalid'),self.handler(peer='203.0.113.5'),self.handler(host='untrusted.invalid')):
                 with self.assertRaises(security.RequestError):security.check_request(handler,authenticate=False)
 
     def test_cloud_startup_checks_secrets_profile_and_nonroot_identity(self):
-        environment={'SCHOOL_PROFILE':'cloud','SCHOOL_PUBLIC_ORIGIN':'https://schooldesk.example.invalid','SCHOOL_PROXY_TOKEN':'x'*40,'SCHOOL_MFA_KEY':Fernet.generate_key().decode(),'SCHOOL_EVIDENCE_SCAN':'clamd','SCHOOL_CLAMD_SOCKET':'/run/clamav/test.sock'}
+        environment={'SCHOOL_EVENT_KEY':'a'*64,'SCHOOL_ENCRYPTED_STORAGE_ACK':'1','SCHOOL_PROFILE':'cloud','SCHOOL_PUBLIC_ORIGIN':'https://schooldesk.example.invalid','SCHOOL_PROXY_TOKEN':'x'*40,'SCHOOL_MFA_KEY':Fernet.generate_key().decode(),'SCHOOL_EVIDENCE_SCAN':'clamd','SCHOOL_CLAMD_SOCKET':'/run/clamav/test.sock'}
         with patch.dict(os.environ,environment,clear=True),patch('deployment.os.geteuid',return_value=1001,create=True):
             deployment.validate()
             with patch.dict(os.environ,{'SCHOOL_BACKUP_KEY':Fernet.generate_key().decode()}):

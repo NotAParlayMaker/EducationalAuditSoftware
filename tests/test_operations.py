@@ -76,7 +76,7 @@ class OperationsHTTPTest(unittest.TestCase):
         token=self.login('auditor')
         with app.connect() as db:db.execute('DELETE FROM request_budgets')
         payload={'note':'Fictional library update review.','allow_external':True}
-        with patch.dict(os.environ,{'SCHOOL_AI_MODE':'openai'}),patch('app.suggest') as provider:
+        with patch.dict(os.environ,{'SCHOOL_EXTERNAL_AI_FICTIONAL_ONLY':'1','SCHOOL_AI_MODE':'openai'}),patch('app.suggest') as provider:
             operations.AI_SLOTS.acquire();operations.AI_SLOTS.acquire()
             try:self.denied(429,'assistant/draft',payload,token=token)
             finally:operations.AI_SLOTS.release();operations.AI_SLOTS.release()

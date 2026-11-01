@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as directory:
     app.DB=Path(directory)/'browser.db'
     app.initialize()
     with app.connect() as db:
-        for name,role in [('admin','administrator'),('auditor','auditor'),('owner','remediation_owner'),('reviewer','reviewer')]:
+        for name,role in [('admin','administrator'),('registrar','registrar'),('auditor','auditor'),('owner','remediation_owner'),('reviewer','reviewer')]:
             accounts.create_user(db,name,role,'fictional-browser-password')
     server=app.ThreadingHTTPServer(('127.0.0.1',0),app.Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
@@ -31,8 +31,14 @@ with tempfile.TemporaryDirectory() as directory:
                 page.locator('#login-password').fill('fictional-browser-password')
                 page.get_by_role('button',name='Sign in',exact=True).click()
                 expect(page.locator('#identity')).to_contain_text('Signed in as '+name)
-                page.locator('nav').get_by_role('button',name='IT audits',exact=True).click()
+                page.locator('nav').get_by_role('button',name='Students' if name=='registrar' else 'IT audits',exact=True).click()
                 return page
+            registrar=login('registrar')
+            expect(registrar.locator('nav').get_by_role('button',name='IT audits',exact=True)).to_be_hidden()
+            for field,value in {'name':'Fictional registrar student','year':'8','guardian':'Fictional guardian'}.items():registrar.locator('#form [name='+field+']').fill(value)
+            registrar.get_by_role('button',name='Save record',exact=True).click()
+            expect(registrar.locator('#message')).to_have_text('Record saved.')
+            expect(registrar.locator('#rows')).to_contain_text('Fictional registrar student')
             auditor=login('auditor')
             for key,value in {'area':'Browser audit','finding':'Fictional update evidence missing','owner':'owner','reviewer':'reviewer','due_date':'2026-12-01'}.items():
                 field=auditor.locator('#form [name='+key+']')
@@ -85,7 +91,7 @@ with tempfile.TemporaryDirectory() as directory:
             expect(reviewer.locator('#login-form')).to_be_visible()
             expect(reviewer.locator('#identity')).to_contain_text('All your sessions were revoked')
             admin=login('admin')
-            expect(admin.locator('#operations-status')).to_contain_text('4 active accounts')
+            expect(admin.locator('#operations-status')).to_contain_text('5 active accounts')
             admin.locator('#account-tools summary').click()
             admin.get_by_role('button',name='Review security events',exact=True).click()
             expect(admin.locator('#security-events')).to_contain_text('login_succeeded')

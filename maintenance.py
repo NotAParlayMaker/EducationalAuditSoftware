@@ -72,7 +72,20 @@ def prune_backups(directory, days, apply=False, now=None):
     return candidates
 
 
-def main():
+def write_checkpoint(database,artifact):
+    artifact=Path(artifact)
+    configured=os.environ.get('SCHOOL_CHECKPOINT_DIR')
+    if deployment.cloud() and not configured:raise ValueError('Configure a separately protected SCHOOL_CHECKPOINT_DIR.')
+    directory=Path(configured) if configured else artifact.parent/'checkpoints'
+    directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+    with closing(readonly(database)) as db:
+        result=events.verify(db)
+    if not result['valid']:raise ValueError('Security history verification failed.')
+    durable_files.write_new(directory/(artifact.name+'.checkpoint.json'),
+        (json.dumps({'count':result['count'],'head':result['head']},sort_keys=True)+'\n').encode())
+
+
+def _main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['backup','verify','restore','snapshot','prune-backups','security-checkpoint','security-verify','anchor-create','anchor-verify'])
     parser.add_argument('file',nargs='?',help='backup destination, or backup source for verify/restore')
@@ -127,11 +140,13 @@ def main():
             directory=Path(args.file)
             name='schooldesk-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)+'.db'
             copy_database(app.DB,directory/name)
+            write_checkpoint(directory/name,directory/name)
             with app.connect() as db:runtime.record_backup(db)
             print('Snapshot created: '+name)
         elif args.command=='backup':
             verify(app.DB)
             copy_database(app.DB,args.file)
+            write_checkpoint(args.file,args.file)
             with app.connect() as db:runtime.record_backup(db)
         elif args.command=='verify':
             verify(args.file)
@@ -144,6 +159,16 @@ def main():
         if args.command in ('security-checkpoint','security-verify'):
             parser.exit(1,'Security verification or checkpoint operation failed. Preserve the database and trusted checkpoint; check integrity and file access.\n')
         parser.exit(1,'Maintenance failed. Check file access, database version, and destination existence. No existing destination is overwritten.\n')
+
+
+def main():
+    try:_main()
+    except BaseException:
+        # Preserve the original failure if storage or signing is itself unavailable.
+        try:events.audit_cli('cli_maintenance_failed')
+        except (ValueError,OSError,sqlite3.Error):pass
+        raise
+    else:events.audit_cli('cli_maintenance')
 
 
 if __name__=='__main__':

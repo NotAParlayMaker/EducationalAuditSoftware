@@ -107,7 +107,9 @@ class ExplicitDemoHTTPTest(unittest.TestCase):
                 self.assertEqual(caught.exception.code,503);caught.exception.close()
                 with urlopen(base+'/api/auth/status') as response:self.assertFalse(json.load(response)['demo_enabled'])
                 server.allow_demo=True
-                with urlopen(base+'/api/audits') as response:self.assertEqual(json.load(response),[])
+                with self.assertRaises(HTTPError) as missing:urlopen(base+'/api/audits')
+                self.assertEqual(missing.exception.code,401);missing.exception.close()
+                with urlopen(Request(base+'/api/audits',headers={'Authorization':'Bearer '+server.demo_token})) as response:self.assertEqual(json.load(response),[])
                 with urlopen(base+'/api/auth/status') as response:self.assertTrue(json.load(response)['demo_enabled'])
             finally:server.shutdown();server.server_close();thread.join()
 

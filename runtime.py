@@ -38,8 +38,10 @@ def status(db):
     mode=os.environ.get('SCHOOL_AI_MODE','offline')
     try:ai_key=secret_config.read('OPENAI_API_KEY')
     except ValueError:ai_key=None
-    configured=mode=='offline' or (mode=='openai' and bool(ai_key) and bool(os.environ.get('SCHOOL_AI_MODEL')))
+    configured=mode=='offline' or (mode=='openai' and os.environ.get('SCHOOL_PROFILE')!='cloud' and os.environ.get('SCHOOL_EXTERNAL_AI_FICTIONAL_ONLY')=='1' and bool(ai_key) and bool(os.environ.get('SCHOOL_AI_MODEL')))
     warnings=[]
+    import security_events
+    if not security_events.signing_key():warnings.append('Security history is unkeyed; configure an external event key and explicitly seal the reviewed legacy baseline.')
     if not accounts.enabled(db):warnings.append('Individual accounts have not been provisioned.')
     for role,count in roles.items():
         if not count:warnings.append('No active '+role.replace('_',' ')+' account.')

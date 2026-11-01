@@ -19,6 +19,7 @@ import audit_workflow as audits
 from assistant import AssistantError, suggest
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer as BaseHTTPServer
 import threading
+import secrets
 from pathlib import Path
 
 class ThreadingHTTPServer(BaseHTTPServer):
@@ -29,6 +30,7 @@ class ThreadingHTTPServer(BaseHTTPServer):
 
     def __init__(self,*args,**kwargs):
         self.worker_slots=threading.BoundedSemaphore(self.worker_limit)
+        self.demo_token=os.environ.get('SCHOOL_ACCESS_TOKEN') or secrets.token_urlsafe(32)
         super().__init__(*args,**kwargs)
 
     def process_request(self,request,client_address):
@@ -90,6 +92,8 @@ def initialize():
             db.execute(f'CREATE TABLE IF NOT EXISTS {name} (id INTEGER PRIMARY KEY, {columns})')
         audits.migrate(db)
         accounts.initialize(db)
+        if (events.signing_key() or db.execute("SELECT 1 FROM security_events WHERE event_mac<>'' LIMIT 1").fetchone()) and not events.verify(db)['valid']:
+            raise ValueError('Signed event history cannot be verified. Restore the correct external key, or explicitly seal a reviewed legacy baseline with manage.py seal-events.')
         operations.initialize(db)
         runtime.initialize(db)
         data_pipeline.initialize(db)
@@ -154,6 +158,10 @@ class Handler(SimpleHTTPRequestHandler):
                 if deployment.cloud() or not getattr(self.server,'allow_demo',False):
                     raise security.RequestError(503,'Account setup required. Run schooldesk.py init or explicitly enable demo mode.')
                 security.check_request(self, write)
+                import hmac
+                supplied=self.headers.get('Authorization','')
+                if not hmac.compare_digest(supplied.encode(),('Bearer '+self.server.demo_token).encode()):
+                    raise security.RequestError(401,'Unlock demo mode with its startup token.')
             return True
         except security.RequestError as error:
             self.close_connection = True
@@ -243,8 +251,9 @@ class Handler(SimpleHTTPRequestHandler):
                 keys = [key for key in SCHEMAS if accounts.can_read_resource(self.user,key)]
                 scope,scope_params=accounts.audit_scope(self.user)
                 counts = {key:db.execute(f'SELECT count(*) FROM {key}'+(' WHERE '+scope if key=='audits' else ''),scope_params if key=='audits' else []).fetchone()[0] for key in keys}
-                counts['audit_severity'] = {row[0]:row[1] for row in db.execute("SELECT severity,count(*) FROM audits WHERE ("+scope+") AND status<>'Closed' GROUP BY severity",scope_params)}
-                counts['overdue_audits'] = db.execute("SELECT count(*) FROM audits WHERE ("+scope+") AND due_date<>'' AND due_date<date('now') AND status<>'Closed'",scope_params).fetchone()[0]
+                if 'audits' in keys:
+                    counts['audit_severity'] = {row[0]:row[1] for row in db.execute("SELECT severity,count(*) FROM audits WHERE ("+scope+") AND status<>'Closed' GROUP BY severity",scope_params)}
+                    counts['overdue_audits'] = db.execute("SELECT count(*) FROM audits WHERE ("+scope+") AND due_date<>'' AND due_date<date('now') AND status<>'Closed'",scope_params).fetchone()[0]
             return self.reply(200, counts)
         if self.path == '/api/users':
             if self.user is None:
@@ -266,7 +275,7 @@ class Handler(SimpleHTTPRequestHandler):
                 row=db.execute('SELECT e.* FROM audit_evidence e JOIN audits a ON a.id=e.audit_id WHERE e.id=? AND ('+scope+')',[int(parts[2])]+params).fetchone()
             if not row:
                 return self.reply(404,{'error':'Evidence not found.'})
-            if not evidence_scan.released(row['scan_status']):return self.reply(423,{'error':'Evidence is quarantined or requires a clean scan.'})
+            if not evidence_scan.released(row['scan_status'],row['media_type']):return self.reply(423,{'error':'Evidence is quarantined or requires a clean scan.'})
             if hashlib.sha256(row['content']).hexdigest()!=row['sha256']:
                 return self.reply(409,{'error':'Evidence integrity check failed.'})
             self.send_response(200)
@@ -278,7 +287,7 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as db:
                 accounts.require_audit_access(db,self.user,int(parts[2]))
                 rows=[dict(row) for row in db.execute('SELECT id,audit_id,filename,media_type,sha256,size,actor,created_at,scan_status FROM audit_evidence WHERE audit_id=? ORDER BY id DESC LIMIT ? OFFSET ?', (int(parts[2]),limit,offset))]
-            for row in rows:row['released']=evidence_scan.released(row['scan_status'])
+            for row in rows:row['released']=evidence_scan.released(row['scan_status'],row['media_type'])
             return self.reply(200,rows)
         if len(parts) == 4 and parts[:2] == ['api', 'audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2]) <= 18 and parts[3] == 'history':
             with connect() as db:
@@ -372,13 +381,13 @@ class Handler(SimpleHTTPRequestHandler):
                 if parts[3]=='reject' and parent['status']=='Closed':raise security.RequestError(409,'Reopen the finding before rejecting evidence.')
                 db.execute('UPDATE audit_evidence SET scan_status=? WHERE id=?',(status,row['id']))
                 audit=dict(parent);audit['revision']+=1
-                if audit['status']=='Closed' and not evidence_scan.released(status):
+                if audit['status']=='Closed' and not evidence_scan.released(status,row['media_type']):
                     audit.update(status='Open',reopen_reason='Evidence quarantined after rescan.',verification='',closure_reason='')
                     db.execute("UPDATE audits SET status='Open',reopen_reason=?,verification='',closure_reason='' WHERE id=?",(audit['reopen_reason'],audit['id']))
                 db.execute('UPDATE audits SET revision=? WHERE id=?',(audit['revision'],audit['id']))
                 audits.record_event(db,dict(audit,attachment_rescanned=row['id'],scan_status=status,rejection_reason=action_data.get('reason','')),self.user['username'])
                 events.append(db,'evidence_scanned' if status=='clean' else 'evidence_quarantined',actor=self.user['username'])
-            return self.reply(200,{'scan_status':status,'released':evidence_scan.released(status)})
+            return self.reply(200,{'scan_status':status,'released':evidence_scan.released(status,row['media_type'])})
         if len(parts)==4 and parts[:2]==['api','audits'] and parts[2].isascii() and parts[2].isdigit() and len(parts[2])<=18 and parts[3]=='evidence':
             data=security.read_json(self,maximum=360000)
             with connect() as db:operations.authorize_upload(db,self.user,int(parts[2]))
