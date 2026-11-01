@@ -10,9 +10,11 @@ import mfa
 
 from security import RequestError
 
-ROLES = ('administrator', 'auditor', 'remediation_owner', 'reviewer')
+ROLES = ('administrator', 'registrar', 'auditor', 'remediation_owner', 'reviewer')
 ITERATIONS = 600_000
 SESSION_SECONDS = 3600
+IDLE_SECONDS = 900
+GLOBAL_LOGIN_LIMIT = 120
 
 
 def initialize(db):
@@ -26,11 +28,16 @@ def initialize(db):
     events.initialize(db)
     db.execute('''CREATE TABLE IF NOT EXISTS password_budget (
         username TEXT PRIMARY KEY, start REAL NOT NULL, attempts INTEGER NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS login_user_budget (
+        identity TEXT PRIMARY KEY, failures INTEGER NOT NULL, next_attempt REAL NOT NULL, updated_at REAL NOT NULL)''')
     columns={row[1] for row in db.execute('PRAGMA table_info(sessions)')}
     if 'public_id' not in columns:
         db.execute("ALTER TABLE sessions ADD COLUMN public_id TEXT NOT NULL DEFAULT ''")
     if 'created_at' not in columns:
         db.execute('ALTER TABLE sessions ADD COLUMN created_at REAL NOT NULL DEFAULT 0')
+    if 'last_seen' not in columns:
+        db.execute('ALTER TABLE sessions ADD COLUMN last_seen REAL NOT NULL DEFAULT 0')
+        db.execute('UPDATE sessions SET last_seen=created_at')
     for row in db.execute("SELECT token_hash,expires FROM sessions WHERE public_id='' ").fetchall():
         db.execute('UPDATE sessions SET public_id=?,created_at=? WHERE token_hash=?',
                    (secrets.token_urlsafe(18),row['expires']-SESSION_SECONDS,row['token_hash']))
@@ -70,13 +77,20 @@ def login(db, data, now=None, issue_session=True):
     username, password = data['username'], data['password']
     if not isinstance(username, str) or not isinstance(password, str) or len(username) > 50 or len(password) > 256:
         raise RequestError(400, 'Invalid credentials format.')
-    # Global bounded budget blocks username/IP rotation on this loopback-only service.
+    # Per-identity backoff absorbs repeated failures without exhausting other users.
+    # Unknown identities use the same digest key and expensive dummy-hash path.
+    identity=digest(username)
     db.execute('BEGIN IMMEDIATE')
+    db.execute('DELETE FROM login_user_budget WHERE updated_at<?',(now-86400,))
+    budget=db.execute('SELECT * FROM login_user_budget WHERE identity=?',(identity,)).fetchone()
+    if budget and budget['next_attempt']>now:
+        db.commit()
+        raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
     row = db.execute('SELECT * FROM login_budget WHERE id=1').fetchone()
     start, count = (row['start'], row['attempts']) if row and now - row['start'] < 60 else (now, 0)
-    if count >= 10:
-        if count==10:
-            db.execute('UPDATE login_budget SET attempts=11 WHERE id=1')
+    if count >= GLOBAL_LOGIN_LIMIT:
+        if count==GLOBAL_LOGIN_LIMIT:
+            db.execute('UPDATE login_budget SET attempts=? WHERE id=1',(GLOBAL_LOGIN_LIMIT+1,))
             events.append(db,'login_throttled')
         db.commit()
         raise RequestError(429, 'Too many login attempts. Try again after one minute.')
@@ -87,6 +101,7 @@ def login(db, data, now=None, issue_session=True):
     candidate = password_hash(password, salt)
     expected = row['password_hash'] if row else '00' * 32
     if not hmac.compare_digest(candidate, expected) or not row or not row['active']:
+        login_failure(db,identity,now)
         events.append(db,'login_failed')
         db.commit()
         raise RequestError(401, 'Invalid username or password.')
@@ -95,6 +110,7 @@ def login(db, data, now=None, issue_session=True):
     db.execute('BEGIN IMMEDIATE')
     fresh=db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
     if not fresh or not fresh['active'] or fresh['password_hash']!=expected:
+        login_failure(db,identity,now)
         events.append(db,'login_failed')
         db.commit()
         raise RequestError(401,'Invalid username or password.')
@@ -105,11 +121,12 @@ def login(db, data, now=None, issue_session=True):
             events.append(db,'login_failed');db.commit()
             raise RequestError(401,'Invalid username or password.')
         verified=True
+    db.execute('DELETE FROM login_user_budget WHERE identity=?',(identity,))
     if not issue_session:return {'verified_mfa':verified}
     token = secrets.token_urlsafe(32)
     db.execute('DELETE FROM sessions WHERE expires<=?', (now,))
-    db.execute('INSERT INTO sessions(token_hash,username,expires,public_id,created_at,auth_time,mfa_verified) VALUES(?,?,?,?,?,?,?)',
-               (digest(token),username,now+SESSION_SECONDS,secrets.token_urlsafe(18),now,now,int(verified)))
+    db.execute('INSERT INTO sessions(token_hash,username,expires,public_id,created_at,auth_time,mfa_verified,last_seen) VALUES(?,?,?,?,?,?,?,?)',
+               (digest(token),username,now+SESSION_SECONDS,secrets.token_urlsafe(18),now,now,int(verified),now))
     removed=db.execute('''DELETE FROM sessions WHERE username=? AND token_hash NOT IN
         (SELECT token_hash FROM sessions WHERE username=? ORDER BY created_at DESC,token_hash DESC LIMIT 10)''',(username,username)).rowcount
     if removed:events.append(db,'session_evicted',actor=username)
@@ -121,17 +138,32 @@ def digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def login_failure(db,identity,now):
+    if not db.in_transaction:db.execute('BEGIN IMMEDIATE')
+    prior=db.execute('SELECT failures,updated_at FROM login_user_budget WHERE identity=?',(identity,)).fetchone()
+    failures=min(prior['failures']+1,16) if prior and now-prior['updated_at']<900 else 1
+    delay=0 if failures<3 else min(300,2**(failures-3))
+    # Bound storage even under username rotation. This is a backoff cache, not history.
+    if not prior and db.execute('SELECT count(*) FROM login_user_budget').fetchone()[0]>=4096:
+        db.execute('DELETE FROM login_user_budget WHERE identity=(SELECT identity FROM login_user_budget ORDER BY updated_at LIMIT 1)')
+    db.execute('INSERT OR REPLACE INTO login_user_budget VALUES(?,?,?,?)',(identity,failures,now+delay,now))
+
+
 def principal(db, authorization, now=None):
+    now=time.time() if now is None else now
     if not enabled(db):
         return None
     token = authorization.removeprefix('Bearer ') if authorization.startswith('Bearer ') else ''
     if not 20 <= len(token) <= 256:
         raise RequestError(401, 'Sign in to continue.')
     row = db.execute('''SELECT users.username, users.role, sessions.auth_time, sessions.mfa_verified FROM sessions JOIN users USING(username)
-        WHERE token_hash=? AND expires>? AND active=1''', (digest(token), time.time() if now is None else now)).fetchone()
+        WHERE token_hash=? AND expires>? AND last_seen>? AND active=1''', (digest(token), now, now-IDLE_SECONDS)).fetchone()
     if not row:
         raise RequestError(401, 'Session expired or invalid. Sign in again.')
     if mfa.active(db,row['username']) and not row['mfa_verified']:raise RequestError(401,'Sign in again with MFA.')
+    if db.execute('UPDATE sessions SET last_seen=? WHERE token_hash=? AND expires>? AND last_seen>?',
+                  (now,digest(token),now,now-IDLE_SECONDS)).rowcount!=1:
+        raise RequestError(401,'Session expired or revoked. Sign in again.')
     return {'username':row['username'],'role':row['role'],'_auth_time':row['auth_time'],'_mfa_verified':bool(row['mfa_verified']),'_mfa_setup_required':mfa.required(row,db) and not row['mfa_verified']}
 
 
@@ -257,10 +289,10 @@ def can_read_resource(user, resource):
     if user is None:
         return True  # Only reachable through an explicitly enabled demo server.
     if resource in ('students','attendance','grades'):
-        return user['role']=='administrator'
+        return user['role']=='registrar'
     if resource in ('assets','tickets'):
         return user['role'] in ('administrator','auditor')
-    return resource=='audits' and user['role'] in ROLES
+    return resource=='audits' and user['role'] in ('administrator','auditor','remediation_owner','reviewer')
 
 
 def audit_scope(user, alias=''):

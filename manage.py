@@ -9,16 +9,27 @@ import app
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['create-user', 'reset-password', 'disable-user', 'list-users','reset-mfa'])
+    parser.add_argument('command', choices=['create-user', 'reset-password', 'disable-user', 'list-users','reset-mfa','seal-events'])
     parser.add_argument('username', nargs='?')
     parser.add_argument('--role', choices=accounts.ROLES)
+    parser.add_argument('--trust-existing-history',action='store_true',help='explicitly trust the verified legacy event chain as the signing baseline')
     args = parser.parse_args()
+    if args.command=='seal-events':
+        if not args.trust_existing_history:parser.error('Sealing requires --trust-existing-history after independent review.')
+        try:
+            with app.connect() as db:
+                events.initialize(db)
+                events.seal_existing(db)
+        except (ValueError,sqlite3.Error):parser.exit(1,'History sealing failed. Preserve the database and check keys and the legacy chain.\n')
+        print('Legacy baseline sealed; this does not establish its prior authenticity.')
+        return
     app.initialize()
     if args.command != 'list-users' and not args.username:
         parser.error('username is required')
     try:
         with app.connect() as db:
             if args.command == 'list-users':
+                events.append(db,'cli_users_listed',actor='local-maintenance')
                 for row in db.execute('SELECT username,role,active FROM users ORDER BY username'):
                     print(row['username'], row['role'], 'active' if row['active'] else 'disabled')
             elif args.command == 'create-user':
@@ -53,6 +64,8 @@ def main():
                     events.append(db,'password_reset',actor='local-maintenance',target=args.username)
                 db.execute('DELETE FROM sessions WHERE username=?', (args.username,))
     except (ValueError, sqlite3.IntegrityError) as error:
+        try:events.audit_cli('cli_account_failed')
+        except (ValueError,OSError,sqlite3.Error):pass
         parser.exit(1, str(error) + '\n')
 
 

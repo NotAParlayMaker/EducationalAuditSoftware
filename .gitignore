@@ -25,4 +25,6 @@ proxy-token.conf
 proxy-token
 mfa-key
 backup-key
+event-key
+*.checkpoint.json
 security-feed/

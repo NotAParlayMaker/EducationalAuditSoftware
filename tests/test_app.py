@@ -41,16 +41,16 @@ class WorkflowTest(unittest.TestCase):
         }
         for resource, data in examples.items():
             with self.subTest(resource=resource):
-                request = Request(self.base + '/api/' + resource, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json', 'X-Schooldesk-Request':'1'})
+                request = Request(self.base + '/api/' + resource, data=json.dumps(data).encode(), headers={'Authorization':'Bearer '+self.server.demo_token, 'Content-Type': 'application/json', 'X-Schooldesk-Request':'1'})
                 with urlopen(request) as response:
                     self.assertEqual(response.status, 201)
                     saved = json.load(response)
                 app.initialize()  # Reinitialization must preserve existing records.
-                with urlopen(self.base + '/api/' + resource) as response:
+                with urlopen(Request(self.base + '/api/' + resource,headers={'Authorization':'Bearer '+self.server.demo_token})) as response:
                     self.assertIn(saved, json.load(response))
 
     def test_invalid_record_rejected(self):
-        request = Request(self.base + '/api/students', data=b'{}', headers={'Content-Type':'application/json','X-Schooldesk-Request':'1'})
+        request = Request(self.base + '/api/students', data=b'{}', headers={'Authorization':'Bearer '+self.server.demo_token, 'Content-Type':'application/json','X-Schooldesk-Request':'1'})
         with self.assertRaises(HTTPError) as caught:
             urlopen(request)
         self.assertEqual(caught.exception.code, 400)

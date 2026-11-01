@@ -23,6 +23,7 @@ def main():
     with tempfile.TemporaryDirectory() as folder:
         snapshot=Path(folder)/'verify.db';secure_backup.restore(destination,snapshot)
         with maintenance.readonly(snapshot) as db:bundle=integrity_anchor.create(db)
+        maintenance.write_checkpoint(snapshot,destination)
     secure_backup.exclusive(directory/(stem+'.anchor.json'),integrity_anchor.canonical(bundle)+b'\n')
     receipt=os.environ.get('SCHOOL_BACKUP_STATUS_FILE')
     if receipt:runtime.record_backup_receipt(receipt)

@@ -4,7 +4,8 @@
 
 | Role | Audit findings, history, and attachments | Other modules |
 |---|---|---|
-| Administrator | All findings in this workspace | All modules |
+| IT administrator | All findings in this workspace | IT inventory/tickets; no student modules |
+| Registrar | None | Student, attendance, and grade modules only |
 | Auditor | All findings in this workspace | IT assets/tickets read; no student modules |
 | Remediation owner | Only findings whose current owner equals the signed-in username | No assets, tickets, or student modules |
 | Reviewer | Only findings whose current reviewer equals the signed-in username | No assets, tickets, or student modules |
@@ -73,3 +74,5 @@ other-module restrictions, and all default startup paths. The real Chromium smok
 test verifies that the assigned auditor/owner/reviewer workflow remains usable.
 Tests use independent fixture accounts and invented records, with no external
 model calls or real school data.
+
+[Security audit upgrade steps](security-audit-response.md) document the registrar migration and mandatory demo token.

@@ -46,11 +46,11 @@ class RuntimeHTTPTest(unittest.TestCase):
     def test_readiness_is_admin_only_and_excludes_secret_values(self):
         admin=self.login('admin');owner=self.login('owner')
         self.denied(403,'operations/status',token=owner)
-        with patch.dict(os.environ,{'OPENAI_API_KEY':'PRIVATE-API-KEY','SCHOOL_AI_MODEL':'PRIVATE-MODEL','SCHOOL_AI_MODE':'openai'}):
+        with patch.dict(os.environ,{'OPENAI_API_KEY':'PRIVATE-API-KEY','SCHOOL_AI_MODEL':'PRIVATE-MODEL','SCHOOL_EXTERNAL_AI_FICTIONAL_ONLY':'1','SCHOOL_AI_MODE':'openai'}):
             result=self.call('operations/status',token=admin)
         self.assertTrue(result['ai']['configured'])
         self.assertNotIn('PRIVATE',json.dumps(result))
-        self.assertEqual(result['active_accounts'],4)
+        self.assertEqual(result['active_accounts'],5)
 
 
 class LauncherTest(unittest.TestCase):

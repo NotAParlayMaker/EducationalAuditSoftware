@@ -27,7 +27,8 @@ def scan(content):
     return 'unavailable'
 
 
-def released(status):
+def released(status,media_type=None):
+    if media_type=='application/pdf' and (os.environ.get('SCHOOL_ALLOW_PDF_EVIDENCE')!='1' or not required()):return False
     return status=='clean' or (not required() and status in ('unscanned','legacy_unscanned'))
 
 

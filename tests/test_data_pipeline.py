@@ -65,10 +65,11 @@ class PipelineHTTPTest(unittest.TestCase):
 
     def test_invalid_rows_report_positions_without_values_and_write_nothing(self):
         source=self.source('students',[{'name':'Fictional student','year':'8','guardian':'Fictional guardian'}, {'name':'PRIVATE-REJECTED-VALUE'}])
-        result=self.preview(source)
+        registrar=self.login('registrar')
+        result=self.preview(source,registrar)
         self.assertFalse(result['valid']);self.assertEqual(result['errors'],[{'row':2,'code':'invalid_record'}])
         self.assertNotIn('PRIVATE',json.dumps(result));self.assertNotIn('batch_id',result)
-        self.assertEqual(self.call('students',token=self.admin),[])
+        self.assertEqual(self.call('students',token=registrar),[])
         self.assertEqual(self.call('pipeline/batches',token=self.admin),[])
 
     def test_changed_source_expiry_and_batch_ownership_are_enforced(self):

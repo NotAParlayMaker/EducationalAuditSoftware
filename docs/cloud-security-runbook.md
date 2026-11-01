@@ -262,3 +262,7 @@ The real browser smoke test exercises MFA enrollment, recovery-code login, and
 step-up export in addition to audit/evidence/pipeline flows. Model responses are
 mocked. Real nginx/certificates, provider IAM/firewalls, real ClamAV signatures,
 off-site collectors, and production load/penetration tests require the chosen target.
+
+## Required security-audit upgrade
+
+Before starting this version, follow [the security audit response](security-audit-response.md): configure an external event-signing key, explicitly seal a reviewed legacy baseline, provision separate registrar credentials, verify encrypted live/temporary storage before setting its acknowledgement, and configure the backup worker checkpoint directory and verification key. Cloud AI is now restricted to offline mode.

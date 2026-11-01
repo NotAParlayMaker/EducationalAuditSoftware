@@ -44,6 +44,9 @@ def main():
     try:
         if args.command=='backup':
             backup(app.DB,args.file)
+            with tempfile.TemporaryDirectory(prefix='schooldesk-checkpoint-') as folder:
+                restored=Path(folder)/'verified.db';restore(args.file,restored)
+                maintenance.write_checkpoint(restored,args.file)
             receipt=os.environ.get('SCHOOL_BACKUP_STATUS_FILE')
             if receipt:runtime.record_backup_receipt(receipt)
             else:

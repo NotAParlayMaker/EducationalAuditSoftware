@@ -81,6 +81,10 @@ def suggest(data):
     if re.search(r'[\w.+-]+@[\w.-]+|\b(?:\d[ -]?){9,}\b', policy_text(note)):
         raise AssistantError('Remove contact details and long identifiers before continuing.')
     mode = os.environ.get('SCHOOL_AI_MODE', 'offline')
+    if mode=='openai':
+        import deployment
+        if deployment.cloud() or os.environ.get('SCHOOL_EXTERNAL_AI_FICTIONAL_ONLY')!='1':
+            raise AssistantError('External AI is restricted to explicitly enabled local fictional-data experiments. Use offline mode for school records.')
     if mode == 'offline':
         return {'mode': 'offline', 'draft': validate_suggestion({
             'area': 'School IT — scope to confirm',

@@ -10,7 +10,7 @@ const choices = {'attendance.status':['Present','Absent','Late'],'assets.status'
 let current = null, records = [], counts = {}, editingAudit = null, pageOffset=0, viewRequest=0;
 const $ = id => document.getElementById(id);
 const label = name => name.replaceAll('_',' ').replace(/\b\w/g,char=>char.toUpperCase());
-const canReadModule = key => !signedInUser || signedInUser.role==='administrator' || (signedInUser.role==='auditor'&&['audits','assets','tickets'].includes(key)) || (['remediation_owner','reviewer'].includes(signedInUser.role)&&key==='audits');
+const canReadModule = key => !signedInUser || (signedInUser.role==='registrar'&&['students','attendance','grades'].includes(key)) || (['administrator','auditor'].includes(signedInUser.role)&&['audits','assets','tickets'].includes(key)) || (['remediation_owner','reviewer'].includes(signedInUser.role)&&key==='audits');
 const tableFields = key => key==='audits'?['area','finding','status','owner','severity','due_date','reviewer']:modules[key].fields;
 let workspaceToken = '', signedInUser = null, sessionGeneration=0, assignmentUsers=[];
 let preparedBatch=null, exportCursor=0;
@@ -38,7 +38,7 @@ async function show(key, editing=false) {
  for(const field of module.fields) { const wrapper=cell('label',label(field)); const assignedOptions=key==='audits'&&signedInUser&&['owner','reviewer'].includes(field)?['',...assignmentUsers.filter(user=>user.role==='administrator'||user.role===(field==='owner'?'remediation_owner':'reviewer')).map(user=>user.username)]:null;
  const options=assignedOptions||choices[key+'.'+field]; const input=document.createElement(options?'select':(key==='audits'&&['finding','evidence','remediation','verification','closure_reason','reopen_reason'].includes(field)?'textarea':'input'));input.name=field;input.required=key!=='audits'||['area','finding','actor'].includes(field);if(key==='audits'&&field==='actor'&&signedInUser){input.value=signedInUser.username;input.readOnly=true;}if(options) options.forEach(value=>{const option=cell('option',value);option.value=value;input.append(option);});else {input.type=['date','due_date'].includes(field)?'date':'text';input.maxLength=500;}wrapper.append(input);$('form').append(wrapper); }
  const submit=cell('button','Save record');submit.type='submit';$('form').append(submit);
- const canCreate=!signedInUser||signedInUser.role==='administrator'||(key==='audits'&&signedInUser.role==='auditor');
+ const canCreate=!signedInUser||(signedInUser.role==='registrar'&&['students','attendance','grades'].includes(key))||(signedInUser.role==='administrator'&&['assets','tickets','audits'].includes(key))||(key==='audits'&&signedInUser.role==='auditor');
  $('form').hidden=editing||!canCreate;
  if(!canCreate)$('message').textContent=key==='audits'?'Choose Edit / transition on a finding assigned to you.':'This role has read-only access to these records.';
  const tr=document.createElement('tr');tableFields(key).forEach(field=>tr.append(cell('th',label(field))));if(key==='audits')tr.append(cell('th','Actions'));$('head').replaceChildren(tr);$('rows').replaceChildren();
@@ -148,7 +148,7 @@ $('login-form').onsubmit = async event => {
  assignmentUsers=await api('users');
  setupPipeline();
  await show(null);
- $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
+ $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · 15-minute idle timeout · one-hour maximum session';
 
  }catch(error){$('identity').textContent=error.message;}
  finally{button.disabled=false;}
@@ -176,7 +176,7 @@ async function auditEvidence(row) {
  const items=await api('audits/'+row.id+'/evidence?limit=100');
  if(current!=='audits')return;
  $('evidence-panel')?.remove();const panel=document.createElement('div');panel.id='evidence-panel';panel.className='panel';panel.append(cell('h2','Evidence · audit #'+row.id));
- panel.append(cell('p','Attachments are untrusted. Only fictional UTF-8 text or PDF files up to 256 KiB are accepted; files are downloaded, never embedded. Maximum 20 per finding.'));
+ panel.append(cell('p','Attachments are untrusted. UTF-8 text is the default. PDFs require operator opt-in and malware scanning; a clean scan or integrity hash does not make a file safe. Open any permitted PDF only in a sandboxed viewer. Maximum 256 KiB per file and 20 files per finding.'));
  for(const item of items){const description=cell('p',item.filename+' · '+item.size+' bytes · SHA-256 '+item.sha256+' · uploaded by '+item.actor+' · scan: '+item.scan_status);const download=cell('button','Download');download.type='button';download.disabled=!item.released;download.onclick=async()=>{
   try {const headers={};if(workspaceToken)headers.Authorization='Bearer '+workspaceToken;const response=await fetch('/api/evidence/'+item.id,{headers});if(!response.ok)throw new Error('Download denied or integrity check failed.');const blob=await response.blob();const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='evidence-'+item.id+(item.media_type==='application/pdf'?'.pdf':'.txt');link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){$('error').textContent=error.message;}
  };panel.append(description,download);if(signedInUser&&['administrator','auditor'].includes(signedInUser.role)){const rescan=cell('button','Rescan evidence');rescan.type='button';rescan.onclick=async()=>{try{await api('evidence/'+item.id+'/rescan',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});await show('audits');await auditEvidence(row);}catch(error){$('error').textContent=error.message;}};panel.append(rescan);const reject=cell('button','Reject retained evidence');reject.type='button';reject.onclick=async()=>{const reason=window.prompt('Why should this attachment be rejected and retained?');if(!reason)return;try{await api('evidence/'+item.id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});await show('audits');await auditEvidence(row);}catch(error){$('error').textContent=error.message;}};panel.append(reject);}}
@@ -254,7 +254,7 @@ function setupPipeline(){
  for(const key of Object.keys(modules).filter(canReadModule)){const option=cell('option',modules[key].title);option.value=key;$('pipeline-resource').append(option);}
  updatePipelineAccess();
 }
-function updatePipelineAccess(){resetPipeline();const resource=$('pipeline-resource').value;$('pipeline-import-tools').hidden=!signedInUser||!(signedInUser.role==='administrator'||(signedInUser.role==='auditor'&&resource==='audits'));}
+function updatePipelineAccess(){resetPipeline();const resource=$('pipeline-resource').value;$('pipeline-import-tools').hidden=!signedInUser||!((signedInUser.role==='registrar'&&['students','attendance','grades'].includes(resource))||(signedInUser.role==='administrator'&&['assets','tickets','audits'].includes(resource))||(signedInUser.role==='auditor'&&resource==='audits'));}
 $('pipeline-resource').onchange=()=>{$('pipeline-file').value='';updatePipelineAccess();};
 $('pipeline-file').onchange=resetPipeline;
 $('pipeline-export-format').onchange=()=>{exportCursor=0;$('pipeline-export-next').disabled=true;};
