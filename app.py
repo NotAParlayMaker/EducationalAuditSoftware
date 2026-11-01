@@ -6,6 +6,7 @@ import security
 import accounts
 import security_events as events
 import operations
+import runtime
 from urllib.parse import urlsplit, parse_qs
 import hashlib
 import socket
@@ -53,6 +54,7 @@ def initialize():
         audits.migrate(db)
         accounts.initialize(db)
         operations.initialize(db)
+        runtime.initialize(db)
 
 
 def validate(resource, data):
@@ -140,6 +142,10 @@ class Handler(SimpleHTTPRequestHandler):
             f'localhost:{self.server.server_port}')
 
     def do_GET(self):
+        if self.path=='/health':
+            security.check_request(self,authenticate=False)
+            with connect() as db:db.execute('SELECT 1').fetchone()
+            return self.reply(200,{'service':'schooldesk','status':'ok'})
         if not self.path.startswith('/api/'):
             try:
                 # Static UI can load before workspace unlock, but host/origin checks still apply.
@@ -157,6 +163,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply(200, {'accounts_enabled': accounts.enabled(db)})
         if not self.guard():
             return
+        if self.path=='/api/work-queue':
+            with connect() as db:return self.reply(200,runtime.work_queue(db,self.user))
+        if self.path=='/api/operations/status':
+            if not self.user or self.user['role']!='administrator':
+                raise security.RequestError(403,'Administrator access is required.')
+            with connect() as db:return self.reply(200,runtime.status(db))
         if self.path == '/api/auth/sessions':
             with connect() as db:
                 return self.reply(200,accounts.session_list(db,self.user,self.headers.get('Authorization','')))
