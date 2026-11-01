@@ -91,6 +91,7 @@ class AuditHTTPTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(app, 'DB', Path(directory) / 'test.db'):
             app.initialize()
             server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)
+            server.allow_demo = True
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:

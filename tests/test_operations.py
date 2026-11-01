@@ -24,7 +24,7 @@ class OperationsHTTPTest(unittest.TestCase):
     denied=test_accounts.AccountHTTPTest.denied
 
     def draft(self,token):
-        return self.call('audits',{'area':'Fictional library','finding':'Review updates','owner':'owner','severity':'High'},token=token)
+        return self.call('audits',{'area':'Fictional library','finding':'Review updates','owner':'owner','reviewer':'reviewer','severity':'High'},token=token)
 
     def test_evidence_authorization_integrity_and_download_headers(self):
         token=self.login('auditor');owner=self.login('owner');reviewer=self.login('reviewer')
@@ -59,7 +59,7 @@ class OperationsHTTPTest(unittest.TestCase):
     def test_pagination_filters_and_role_safe_summary(self):
         token=self.login('auditor')
         for index in range(53):
-            self.call('audits',{'area':'Pagination case','finding':str(index),'owner':'owner','severity':'High'},token=token)
+            self.call('audits',{'area':'Pagination case','finding':str(index),'owner':'owner','reviewer':'reviewer','severity':'High'},token=token)
         page=self.call('audits?owner=owner&severity=High&status=Draft&limit=50',token=token)
         next_page=self.call('audits?owner=owner&severity=High&status=Draft&limit=50&offset=50',token=token)
         self.assertEqual(len(page),50)

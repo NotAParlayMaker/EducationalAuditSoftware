@@ -7,9 +7,10 @@ const modules = {
  tickets: {title:'Support tickets', fields:['title','requester','priority','status'], description:'Keep school support requests and priorities visible.'}
 };
 const choices = {'attendance.status':['Present','Absent','Late'],'assets.status':['Available','In use','Repair'],'audits.status':['Draft','Open','In progress','Awaiting verification','Closed'],'audits.severity':['','Low','Medium','High','Critical'],'tickets.status':['Open','In progress','Resolved'],'tickets.priority':['Low','Medium','High']};
-let current = null, records = [], counts = {}, editingAudit = null, pageOffset=0;
+let current = null, records = [], counts = {}, editingAudit = null, pageOffset=0, viewRequest=0;
 const $ = id => document.getElementById(id);
 const label = name => name.replaceAll('_',' ').replace(/\b\w/g,char=>char.toUpperCase());
+const canReadModule = key => !signedInUser || signedInUser.role==='administrator' || (signedInUser.role==='auditor'&&['audits','assets','tickets'].includes(key)) || (['remediation_owner','reviewer'].includes(signedInUser.role)&&key==='audits');
 const tableFields = key => key==='audits'?['area','finding','status','owner','severity','due_date','reviewer']:modules[key].fields;
 let workspaceToken = '', signedInUser = null, sessionGeneration=0, assignmentUsers=[];
 async function api(path, options = {}) { const generation=sessionGeneration; options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(generation!==sessionGeneration)throw new Error('Session changed. Request discarded.'); if(response.status===401&&signedInUser&&!['auth/login','auth/change-password'].includes(path))signedOut('Session expired or revoked. Sign in again.'); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
@@ -23,25 +24,27 @@ function drawRows() {
  $('rows').append(tr); }
  if(!filtered.length) { const tr=document.createElement('tr'), td=cell('td',records.length?'No matching records.':'No records yet. Add your first record above.'); td.colSpan=tableFields(current).length+(current==='audits'?1:0);tr.append(td);$('rows').append(tr); }
 }
-async function show(key) {
+async function show(key, editing=false) {
+ const request=++viewRequest; $('form').hidden=true;
  current=key; editingAudit=null; $('audit-history')?.remove(); $('evidence-panel')?.remove(); $('error').textContent='';
  document.querySelectorAll('nav button').forEach(button=>button.classList.toggle('active',button.dataset.key===(key||'')));
  $('audit-filters').hidden=key!=='audits';
  $('overview').hidden=!!key; $('module').hidden=!key; $('breadcrumb').textContent=key?modules[key].title:'Overview';
  if(!key) { await dashboard();return; }
+ if(key==='audits'&&signedInUser){assignmentUsers=await api('users');if(current!==key||request!==viewRequest)return;}
  $('record-form-title').textContent=key==='audits'?'New audit finding':'Add a record';$('cancel-edit').hidden=true;$('audit-guidance').hidden=key!=='audits';
  const module=modules[key]; $('title').textContent=module.title;$('description').textContent=module.description;$('category').textContent=['students','attendance','grades'].includes(key)?'SCHOOL ADMINISTRATION':'IT OPERATIONS';$('message').textContent='';$('search').value='';$('form').replaceChildren();
  for(const field of module.fields) { const wrapper=cell('label',label(field)); const assignedOptions=key==='audits'&&signedInUser&&['owner','reviewer'].includes(field)?['',...assignmentUsers.filter(user=>user.role==='administrator'||user.role===(field==='owner'?'remediation_owner':'reviewer')).map(user=>user.username)]:null;
  const options=assignedOptions||choices[key+'.'+field]; const input=document.createElement(options?'select':(key==='audits'&&['finding','evidence','remediation','verification','closure_reason','reopen_reason'].includes(field)?'textarea':'input'));input.name=field;input.required=key!=='audits'||['area','finding','actor'].includes(field);if(key==='audits'&&field==='actor'&&signedInUser){input.value=signedInUser.username;input.readOnly=true;}if(options) options.forEach(value=>{const option=cell('option',value);option.value=value;input.append(option);});else {input.type=['date','due_date'].includes(field)?'date':'text';input.maxLength=500;}wrapper.append(input);$('form').append(wrapper); }
  const submit=cell('button','Save record');submit.type='submit';$('form').append(submit);
  const canCreate=!signedInUser||signedInUser.role==='administrator'||(key==='audits'&&signedInUser.role==='auditor');
- $('form').hidden=!canCreate;
+ $('form').hidden=editing||!canCreate;
  if(!canCreate)$('message').textContent=key==='audits'?'Choose Edit / transition on a finding assigned to you.':'This role has read-only access to these records.';
  const tr=document.createElement('tr');tableFields(key).forEach(field=>tr.append(cell('th',label(field))));if(key==='audits')tr.append(cell('th','Actions'));$('head').replaceChildren(tr);$('rows').replaceChildren();
- try { const result=await api(listPath(key)); if(current===key){records=result;drawRows();} }catch(error){$('error').textContent=error.message;}
+ try { const result=await api(listPath(key)); if(current===key&&request===viewRequest){records=result;drawRows();} }catch(error){$('error').textContent=error.message;}
 }
 async function dashboard() {
- try {const visibleKeys=Object.keys(modules).filter(key=>!signedInUser||signedInUser.role==='administrator'||!['students','attendance','grades'].includes(key));counts=await api('summary');$('cards').replaceChildren();for(const key of visibleKeys){const module=modules[key];const button=document.createElement('button');button.className='card';button.append(cell('div',module.title),cell('strong',counts[key]),cell('span','View records →'));button.onclick=()=>{pageOffset=0;show(key);};$('cards').append(button);}if(visibleKeys.includes('audits')){const card=cell('div','Overdue findings');card.className='card';card.append(cell('strong',counts.overdue_audits),cell('p','Active severity: '+Object.entries(counts.audit_severity).map(([severity,total])=>(severity||'Unspecified')+' '+total).join(' · ')));$('cards').append(card);}await loadWorkQueue();$('operations-card').hidden=!signedInUser||signedInUser.role!=='administrator';if(!$('operations-card').hidden)await refreshReadiness();}catch(error){$('error').textContent=error.message;}
+ try {const visibleKeys=Object.keys(modules).filter(canReadModule);counts=await api('summary');$('cards').replaceChildren();for(const key of visibleKeys){const module=modules[key];const button=document.createElement('button');button.className='card';button.append(cell('div',module.title),cell('strong',counts[key]),cell('span','View records →'));button.onclick=()=>{pageOffset=0;show(key);};$('cards').append(button);}if(visibleKeys.includes('audits')){const card=cell('div','Overdue findings');card.className='card';card.append(cell('strong',counts.overdue_audits),cell('p','Active severity: '+Object.entries(counts.audit_severity).map(([severity,total])=>(severity||'Unspecified')+' '+total).join(' · ')));$('cards').append(card);}await loadWorkQueue();$('operations-card').hidden=!signedInUser||signedInUser.role!=='administrator';if(!$('operations-card').hidden)await refreshReadiness();}catch(error){$('error').textContent=error.message;}
 }
 for(const [key,title] of [['','Overview'],...Object.entries(modules).map(([key,m])=>[key,m.title])]){const button=cell('button',title);button.dataset.key=key;button.onclick=()=>{pageOffset=0;show(key||null);};$('nav').append(button);}
 $('search').oninput=drawRows;
@@ -90,10 +93,10 @@ $('assistant-use').onclick = async () => {
 };
 
 async function editAudit(row) {
- await show('audits');
- if(current !== 'audits') return;
+ const request=viewRequest+1;
+ await show('audits',true);
+ if(current !== 'audits'||request!==viewRequest) return;
  editingAudit = {id:row.id, revision:row.revision};
- $('form').hidden=false;
  for(const field of modules.audits.fields){const input=$('form').elements.namedItem(field);if(input.tagName==='SELECT'&&row[field]&&!Array.from(input.options).some(option=>option.value===row[field])){const legacy=cell('option',row[field]+' (legacy assignment)');legacy.value=row[field];input.append(legacy);}input.value=row[field]||'';}
  $('record-form-title').textContent='Edit finding #'+row.id;$('cancel-edit').hidden=false;
  $('form').elements.namedItem('actor').value = signedInUser?signedInUser.username:'';
@@ -106,6 +109,7 @@ async function editAudit(row) {
  status.replaceChildren(...allowed[row.status].map(value=>{const option=cell('option',value);option.value=value;return option;}));
  $('form').querySelector('button').textContent='Save revision';
  $('message').textContent='Editing audit #'+row.id+' · revision '+row.revision+'. Enter the person making this change. Closed findings require a reopen reason.';
+ $('form').hidden=false;
  $('module').scrollIntoView({behavior:'smooth'});
 }
 async function auditHistory(id, historyOffset=0) {
@@ -135,7 +139,7 @@ $('login-form').onsubmit = async event => {
  $('unlock-form').hidden=true;$('login-form').hidden=true;
  // Keep logout reachable after hiding the legacy-token form.
  $('lock-workspace').hidden=false;$('identity').after($('lock-workspace'));
- document.querySelectorAll('nav button').forEach(button=>{button.hidden=signedInUser.role!=='administrator'&&['students','attendance','grades'].includes(button.dataset.key);});
+ document.querySelectorAll('nav button').forEach(button=>{button.hidden=!!button.dataset.key&&!canReadModule(button.dataset.key);});
  assignmentUsers=await api('users');
  await show(null);
  $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
@@ -147,7 +151,7 @@ $('login-form').onsubmit = async event => {
 api('auth/status').then(status=>{
  if(signedInUser)return;
  if(status.accounts_enabled){$('unlock-form').hidden=true;$('identity').textContent='Sign in with an individual account. Legacy workspace tokens do not grant access.';}
- else {$('login-form').hidden=true;}
+ else {$('login-form').hidden=true;if(!status.demo_enabled){$('unlock-form').hidden=true;$('identity').textContent='Workspace locked: run python3 schooldesk.py init before serving, or deliberately enable fictional-data demo mode.';}else{$('demo-banner').hidden=false;}}
 }).catch(error=>{if(!signedInUser)$('identity').textContent=error.message;});
 
 function listPath(key) {
@@ -184,7 +188,7 @@ function signedOut(message) {
  workspaceToken='';signedInUser=null;sessionGeneration++;
  $('security-panel').hidden=true;$('module').hidden=true;$('overview').hidden=true;
  $('queue-items').replaceChildren();$('operations-status').replaceChildren();$('operations-card').hidden=true;assignmentUsers=[];$('account-tools').open=false;
- $('cards').replaceChildren();$('rows').replaceChildren();$('sessions-list').replaceChildren();$('security-events').replaceChildren();
+ $('form').replaceChildren();$('message').textContent='';$('security-verify-status').textContent='';$('cards').replaceChildren();$('rows').replaceChildren();$('sessions-list').replaceChildren();$('security-events').replaceChildren();
  $('evidence-panel')?.remove();$('audit-history')?.remove();
  $('login-form').hidden=false;$('identity').textContent=message;
  for(const id of ['current-password','new-password','confirm-password','login-password'])$(id).value='';

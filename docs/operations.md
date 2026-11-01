@@ -7,7 +7,9 @@ service. Use protected local storage and review the account setup in README firs
 
 Signed-in auditors/administrators and assigned remediation owners may upload evidence
 to an open finding. Reviewers can download, but cannot upload or replace evidence.
-All signed-in roles can read all IT evidence; no per-school read isolation exists.
+Owners/reviewers can read evidence only for their currently assigned findings.
+Administrators/auditors retain workspace-wide audit oversight. Multi-school tenant
+isolation is not implemented.
 Uploads are limited to 256 KiB per file, 20 per finding, and simple ASCII filenames.
 Only UTF-8 text and PDF-signature files are accepted. This is not malware scanning
 or PDF sanitization. Treat downloaded files as untrusted and keep viewers updated.

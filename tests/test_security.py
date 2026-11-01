@@ -23,6 +23,7 @@ class SecurityHTTPTest(unittest.TestCase):
         app.DB = Path(cls.temp.name) / 'school.db'
         app.initialize()
         cls.server = app.ThreadingHTTPServer(('127.0.0.1', 0), app.Handler)
+        cls.server.allow_demo = True
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         cls.base = f'http://127.0.0.1:{cls.server.server_port}'

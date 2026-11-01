@@ -36,10 +36,11 @@ def record_backup(db):
 
 
 def work_queue(db,user):
-    # IT data remains readable to all account roles; task selection is role-specific.
+    # Assignment scope applies before selecting actionable states.
     role=user['role'] if user else 'administrator'
     username=user['username'] if user else ''
-    where="status<>'Closed'";params=[]
+    scope,params=accounts.audit_scope(user)
+    where="("+scope+") AND status<>'Closed'"
     if role=='remediation_owner':
         where+=" AND owner=? AND status IN ('Open','In progress')";params.append(username)
     elif role=='reviewer':
