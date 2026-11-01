@@ -9,18 +9,19 @@ const modules = {
 const choices = {'attendance.status':['Present','Absent','Late'],'assets.status':['Available','In use','Repair'],'audits.status':['Draft','Open','In progress','Awaiting verification','Closed'],'audits.severity':['','Low','Medium','High','Critical'],'tickets.status':['Open','In progress','Resolved'],'tickets.priority':['Low','Medium','High']};
 let current = null, records = [], counts = {}, editingAudit = null, pageOffset=0;
 const $ = id => document.getElementById(id);
-const label = name => name.charAt(0).toUpperCase()+name.slice(1);
-let workspaceToken = '', signedInUser = null, sessionGeneration=0;
+const label = name => name.replaceAll('_',' ').replace(/\b\w/g,char=>char.toUpperCase());
+const tableFields = key => key==='audits'?['area','finding','status','owner','severity','due_date','reviewer']:modules[key].fields;
+let workspaceToken = '', signedInUser = null, sessionGeneration=0, assignmentUsers=[];
 async function api(path, options = {}) { const generation=sessionGeneration; options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(generation!==sessionGeneration)throw new Error('Session changed. Request discarded.'); if(response.status===401&&signedInUser&&!['auth/login','auth/change-password'].includes(path))signedOut('Session expired or revoked. Sign in again.'); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
 function cell(tag, text) { const element=document.createElement(tag); element.textContent=text; return element; }
 function drawRows() {
  $('page-label').textContent='Page '+(pageOffset/50+1)+' · search filters this page';$('page-prev').disabled=pageOffset===0;$('page-next').disabled=records.length<50;
  $('rows').replaceChildren();
  const filtered=records.filter(row=>Object.values(row).join(' ').toLowerCase().includes($('search').value.toLowerCase()));
- for(const row of filtered) { const tr=document.createElement('tr'); for(const field of modules[current].fields) tr.append(cell('td',row[field] || ''));
+ for(const row of filtered) { const tr=document.createElement('tr'); for(const field of tableFields(current)) tr.append(cell('td',row[field] || ''));
  if(current === 'audits') { const td=document.createElement('td'); const edit=cell('button','Edit / transition');edit.type='button';edit.onclick=()=>editAudit(row);const evidence=cell('button','Evidence');evidence.type='button';evidence.onclick=()=>auditEvidence(row);const history=cell('button','History');history.type='button';history.onclick=()=>auditHistory(row.id);td.append(edit,history,evidence);tr.append(td); }
  $('rows').append(tr); }
- if(!filtered.length) { const tr=document.createElement('tr'), td=cell('td',records.length?'No matching records.':'No records yet. Add your first record above.'); td.colSpan=modules[current].fields.length;tr.append(td);$('rows').append(tr); }
+ if(!filtered.length) { const tr=document.createElement('tr'), td=cell('td',records.length?'No matching records.':'No records yet. Add your first record above.'); td.colSpan=tableFields(current).length+(current==='audits'?1:0);tr.append(td);$('rows').append(tr); }
 }
 async function show(key) {
  current=key; editingAudit=null; $('audit-history')?.remove(); $('evidence-panel')?.remove(); $('error').textContent='';
@@ -28,17 +29,19 @@ async function show(key) {
  $('audit-filters').hidden=key!=='audits';
  $('overview').hidden=!!key; $('module').hidden=!key; $('breadcrumb').textContent=key?modules[key].title:'Overview';
  if(!key) { await dashboard();return; }
+ $('record-form-title').textContent=key==='audits'?'New audit finding':'Add a record';$('cancel-edit').hidden=true;$('audit-guidance').hidden=key!=='audits';
  const module=modules[key]; $('title').textContent=module.title;$('description').textContent=module.description;$('category').textContent=['students','attendance','grades'].includes(key)?'SCHOOL ADMINISTRATION':'IT OPERATIONS';$('message').textContent='';$('search').value='';$('form').replaceChildren();
- for(const field of module.fields) { const wrapper=cell('label',label(field)); const options=choices[key+'.'+field]; const input=document.createElement(options?'select':'input');input.name=field;input.required=key!=='audits'||['area','finding','actor'].includes(field);if(key==='audits'&&field==='actor'&&signedInUser){input.value=signedInUser.username;input.readOnly=true;}if(options) options.forEach(value=>{const option=cell('option',value);option.value=value;input.append(option);});else {input.type=['date','due_date'].includes(field)?'date':'text';input.maxLength=500;}wrapper.append(input);$('form').append(wrapper); }
+ for(const field of module.fields) { const wrapper=cell('label',label(field)); const assignedOptions=key==='audits'&&signedInUser&&['owner','reviewer'].includes(field)?['',...assignmentUsers.filter(user=>user.role==='administrator'||user.role===(field==='owner'?'remediation_owner':'reviewer')).map(user=>user.username)]:null;
+ const options=assignedOptions||choices[key+'.'+field]; const input=document.createElement(options?'select':(key==='audits'&&['finding','evidence','remediation','verification','closure_reason','reopen_reason'].includes(field)?'textarea':'input'));input.name=field;input.required=key!=='audits'||['area','finding','actor'].includes(field);if(key==='audits'&&field==='actor'&&signedInUser){input.value=signedInUser.username;input.readOnly=true;}if(options) options.forEach(value=>{const option=cell('option',value);option.value=value;input.append(option);});else {input.type=['date','due_date'].includes(field)?'date':'text';input.maxLength=500;}wrapper.append(input);$('form').append(wrapper); }
  const submit=cell('button','Save record');submit.type='submit';$('form').append(submit);
  const canCreate=!signedInUser||signedInUser.role==='administrator'||(key==='audits'&&signedInUser.role==='auditor');
  $('form').hidden=!canCreate;
  if(!canCreate)$('message').textContent=key==='audits'?'Choose Edit / transition on a finding assigned to you.':'This role has read-only access to these records.';
- const tr=document.createElement('tr');module.fields.forEach(field=>tr.append(cell('th',label(field))));if(key==='audits')tr.append(cell('th','Actions'));$('head').replaceChildren(tr);$('rows').replaceChildren();
+ const tr=document.createElement('tr');tableFields(key).forEach(field=>tr.append(cell('th',label(field))));if(key==='audits')tr.append(cell('th','Actions'));$('head').replaceChildren(tr);$('rows').replaceChildren();
  try { const result=await api(listPath(key)); if(current===key){records=result;drawRows();} }catch(error){$('error').textContent=error.message;}
 }
 async function dashboard() {
- try {const visibleKeys=Object.keys(modules).filter(key=>!signedInUser||signedInUser.role==='administrator'||!['students','attendance','grades'].includes(key));counts=await api('summary');$('cards').replaceChildren();for(const key of visibleKeys){const module=modules[key];const button=document.createElement('button');button.className='card';button.append(cell('div',module.title),cell('strong',counts[key]),cell('span','View records →'));button.onclick=()=>{pageOffset=0;show(key);};$('cards').append(button);}if(visibleKeys.includes('audits')){const card=cell('div','Overdue findings');card.className='card';card.append(cell('strong',counts.overdue_audits),cell('p','Active severity: '+Object.entries(counts.audit_severity).map(([severity,total])=>(severity||'Unspecified')+' '+total).join(' · ')));$('cards').append(card);}}catch(error){$('error').textContent=error.message;}
+ try {const visibleKeys=Object.keys(modules).filter(key=>!signedInUser||signedInUser.role==='administrator'||!['students','attendance','grades'].includes(key));counts=await api('summary');$('cards').replaceChildren();for(const key of visibleKeys){const module=modules[key];const button=document.createElement('button');button.className='card';button.append(cell('div',module.title),cell('strong',counts[key]),cell('span','View records →'));button.onclick=()=>{pageOffset=0;show(key);};$('cards').append(button);}if(visibleKeys.includes('audits')){const card=cell('div','Overdue findings');card.className='card';card.append(cell('strong',counts.overdue_audits),cell('p','Active severity: '+Object.entries(counts.audit_severity).map(([severity,total])=>(severity||'Unspecified')+' '+total).join(' · ')));$('cards').append(card);}await loadWorkQueue();$('operations-card').hidden=!signedInUser||signedInUser.role!=='administrator';if(!$('operations-card').hidden)await refreshReadiness();}catch(error){$('error').textContent=error.message;}
 }
 for(const [key,title] of [['','Overview'],...Object.entries(modules).map(([key,m])=>[key,m.title])]){const button=cell('button',title);button.dataset.key=key;button.onclick=()=>{pageOffset=0;show(key||null);};$('nav').append(button);}
 $('search').oninput=drawRows;
@@ -91,7 +94,8 @@ async function editAudit(row) {
  if(current !== 'audits') return;
  editingAudit = {id:row.id, revision:row.revision};
  $('form').hidden=false;
- for(const field of modules.audits.fields) $('form').elements.namedItem(field).value = row[field] || '';
+ for(const field of modules.audits.fields){const input=$('form').elements.namedItem(field);if(input.tagName==='SELECT'&&row[field]&&!Array.from(input.options).some(option=>option.value===row[field])){const legacy=cell('option',row[field]+' (legacy assignment)');legacy.value=row[field];input.append(legacy);}input.value=row[field]||'';}
+ $('record-form-title').textContent='Edit finding #'+row.id;$('cancel-edit').hidden=false;
  $('form').elements.namedItem('actor').value = signedInUser?signedInUser.username:'';
  if(signedInUser&&['remediation_owner','reviewer'].includes(signedInUser.role)){
  const writable=signedInUser.role==='reviewer'?['status','verification','closure_reason']:['status','remediation','evidence'];
@@ -128,20 +132,23 @@ $('login-form').onsubmit = async event => {
  try {
  const result=await api('auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
  workspaceToken=result.token;signedInUser=result.user;sessionGeneration++;$('security-panel').hidden=false;$('security-admin').hidden=signedInUser.role!=='administrator';$('security-message').textContent='';
- $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
  $('unlock-form').hidden=true;$('login-form').hidden=true;
  // Keep logout reachable after hiding the legacy-token form.
  $('lock-workspace').hidden=false;$('identity').after($('lock-workspace'));
  document.querySelectorAll('nav button').forEach(button=>{button.hidden=signedInUser.role!=='administrator'&&['students','attendance','grades'].includes(button.dataset.key);});
+ assignmentUsers=await api('users');
  await show(null);
+ $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
+
  }catch(error){$('identity').textContent=error.message;}
  finally{button.disabled=false;}
 };
 
 api('auth/status').then(status=>{
+ if(signedInUser)return;
  if(status.accounts_enabled){$('unlock-form').hidden=true;$('identity').textContent='Sign in with an individual account. Legacy workspace tokens do not grant access.';}
  else {$('login-form').hidden=true;}
-}).catch(error=>{$('identity').textContent=error.message;});
+}).catch(error=>{if(!signedInUser)$('identity').textContent=error.message;});
 
 function listPath(key) {
  const params=new URLSearchParams({limit:'50',offset:String(pageOffset)});
@@ -176,6 +183,7 @@ async function auditEvidence(row) {
 function signedOut(message) {
  workspaceToken='';signedInUser=null;sessionGeneration++;
  $('security-panel').hidden=true;$('module').hidden=true;$('overview').hidden=true;
+ $('queue-items').replaceChildren();$('operations-status').replaceChildren();$('operations-card').hidden=true;assignmentUsers=[];$('account-tools').open=false;
  $('cards').replaceChildren();$('rows').replaceChildren();$('sessions-list').replaceChildren();$('security-events').replaceChildren();
  $('evidence-panel')?.remove();$('audit-history')?.remove();
  $('login-form').hidden=false;$('identity').textContent=message;
@@ -213,3 +221,18 @@ $('security-verify').onclick=async()=>{
  try{const result=await api('security/verify');$('security-verify-status').textContent=result.valid?'Chain internally consistent · '+result.count+' events · head '+result.head+'. Compare an independently saved checkpoint to detect truncation or full rewrites.':'Security event chain verification failed. Preserve the database for investigation.';}
  catch(error){$('security-verify-status').textContent=error.message;}
 };
+
+$('cancel-edit').onclick=()=>show(current);
+async function loadWorkQueue(){
+ const queue=await api('work-queue');$('queue-items').replaceChildren();
+ $('queue-title').textContent=signedInUser&&['remediation_owner','reviewer'].includes(signedInUser.role)?'My work':'Audit work queue';
+ $('queue-summary').textContent=queue.total?'Showing '+queue.shown+' of '+queue.total+' active findings, ordered by severity and deadline.':'No findings currently require action in this queue.';
+ for(const item of queue.items){const button=document.createElement('button');button.type='button';button.className='queue-item';button.append(cell('strong','#'+item.id+' · '+item.area),cell('span',item.finding),cell('span',item.status+' · '+(item.severity||'Severity not set')+' · '+(item.owner||'Unassigned')+' · '+(item.due_date||'No deadline')+(item.overdue?' · OVERDUE':'')));button.onclick=()=>editAudit(item);$('queue-items').append(button);}
+}
+async function refreshReadiness(){
+ try{const state=await api('operations/status');const container=$('operations-status');container.replaceChildren();container.append(cell('p',state.active_accounts+' active accounts · assistant '+state.ai.mode+' ('+(state.ai.configured?'configured':'configuration needed')+')'));
+ container.append(cell('p',state.backup.last_success_at?'Last recorded backup: '+new Date(Number(state.backup.last_success_at)*1000).toLocaleString():'No backup recorded yet. Run the snapshot command in the operator guide.'));
+ for(const warning of state.warnings)container.append(cell('p',warning));if(!state.warnings.length)container.append(cell('p','No readiness warnings.'));
+ }catch(error){$('operations-status').textContent=error.message;}
+}
+$('operations-refresh').onclick=refreshReadiness;

@@ -7,7 +7,8 @@ A dependency-free starter workspace for school administration and IT operations.
 Requires Python 3.12 or newer. From this repository:
 
 ```sh
-python3 app.py
+python3 schooldesk.py init
+python3 schooldesk.py serve
 ```
 
 Open your browser at `http://127.0.0.1:8000`. Set `PORT` to change the port or
@@ -244,3 +245,18 @@ unknown failed-login names, passwords, tokens, student data, request paths, and
 record contents are excluded. The chain detects internal edits/reordering, but
 requires an independently saved checkpoint to detect tail truncation or a full
 rewrite. See [security activity and checkpoints](docs/security-activity.md).
+
+
+## Day-to-day operation
+
+Start with [the operator guide](docs/operator-guide.md). The guided launcher adds
+`init`, `doctor`, and `serve` commands; serving requires account setup unless demo
+mode is explicitly selected. The dashboard now has role-specific work queues,
+severity/deadline ordering, direct task opening, and administrator readiness checks.
+Audit assignments use compatible active-account selectors, forms support canceling
+unsaved edits, and the main table emphasizes operational fields.
+
+Successful backup commands record freshness for readiness warnings. Security tools
+remain available in a collapsed account panel. `/health` provides a minimal local
+liveness check; detailed readiness requires administrator access. No public server
+or backup scheduler is automatically installed.

@@ -6,3 +6,5 @@
 #audit-history{margin-top:24px}td button{display:block;margin:4px;padding:7px;cursor:pointer}details{padding:12px 0;border-bottom:1px solid #ddd}summary{cursor:pointer}
 
 .pagination{display:flex;gap:16px;align-items:center;margin:20px 0}.pagination button,#evidence-panel button{padding:10px;cursor:pointer}#audit-filters{margin-top:24px}#evidence-panel{margin-top:24px;overflow-wrap:anywhere}
+
+.queue-items{display:grid;gap:12px}.queue-item{display:flex;flex-direction:column;gap:8px;text-align:left;background:white;border:1px solid #d8e1df;border-radius:8px;padding:18px;color:inherit;font:inherit;cursor:pointer}.queue-item span{overflow-wrap:anywhere}#operations-card{margin-top:24px}summary{cursor:pointer;padding:10px 0}#cancel-edit{margin-top:12px;padding:10px}#audit-guidance{line-height:1.7;color:#59677a}#form textarea{min-height:80px}td{white-space:normal;min-width:100px;max-width:350px;overflow-wrap:anywhere}

@@ -101,3 +101,5 @@ and local ephemeral port, verifies sign-in and the auditor/owner/reviewer workfl
 attachment upload/download, verified closure, history, and logout, and removes its
 database afterward. Browser dependencies are optional and are not required by the
 default offline unit suite. The development run used system Chromium successfully.
+
+For first launch, daily queues, and readiness checks, use [the operator guide](operator-guide.md).

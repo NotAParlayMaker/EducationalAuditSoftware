@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 
 import app
+import runtime
 import json
 import security_events as events
 
@@ -101,9 +102,12 @@ def main():
             directory=Path(args.file)
             name='schooldesk-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+secrets.token_hex(4)+'.db'
             copy_database(app.DB,directory/name)
+            with app.connect() as db:runtime.record_backup(db)
+            print('Snapshot created: '+name)
         elif args.command=='backup':
             verify(app.DB)
             copy_database(app.DB,args.file)
+            with app.connect() as db:runtime.record_backup(db)
         elif args.command=='verify':
             verify(args.file)
         else:
