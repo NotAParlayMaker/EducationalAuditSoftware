@@ -14,6 +14,9 @@ import deployment
 import json
 import security_events as events
 import integrity_anchor
+import tempfile
+import durable_files
+from contextlib import closing
 
 
 def readonly(path):
@@ -36,21 +39,21 @@ def verify(path):
 def copy_database(source,destination):
     destination=Path(destination)
     destination.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-    # Exclusive creation prevents accidental overwrite of the live database or backup.
-    descriptor=os.open(destination,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+    # Keep partial and unverified copies private until atomic no-overwrite publication.
+    descriptor,temporary=tempfile.mkstemp(prefix='.schooldesk-copy-',dir=destination.parent)
     os.close(descriptor)
     try:
-        with readonly(source) as origin, sqlite3.connect(destination) as target:
+        with closing(readonly(source)) as origin, closing(sqlite3.connect(temporary)) as target, target:
             origin.backup(target)
             # Backups must never reactivate old sessions when restored.
             target.execute('DELETE FROM sessions')
             tables={row[0] for row in target.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if 'mfa_recovery' in tables:target.execute('DELETE FROM mfa_recovery')
             if 'mfa_accounts' in tables:target.execute('UPDATE mfa_accounts SET last_counter=max(last_counter,?)',(int(time.time()//30),))
-        verify(destination)
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
+        verify(temporary)
+        durable_files.publish_new(temporary,destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def prune_backups(directory, days, apply=False, now=None):

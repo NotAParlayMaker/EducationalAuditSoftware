@@ -87,3 +87,8 @@ these typed events do not capture raw request or school-record content.
 See [access boundaries](access-boundaries.md) for exact scope, reassignment behavior, and mandatory account-mode defaults.
 
 MFA, evidence quarantine, encrypted backups, and reviewed deployment/monitoring examples are described in [the cloud security runbook](cloud-security-runbook.md). Actual provider rollout remains unconfigured.
+
+Audit input fields are normalized before authorization and lifecycle checks.
+Whitespace around a status cannot bypass fresh authentication, attachment
+verification, or the requirement to save the independent reviewer assignment
+before closure. Rejected updates leave the finding and its revision unchanged.

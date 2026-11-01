@@ -7,6 +7,7 @@ import tempfile
 
 import maintenance
 import security_events as events
+import durable_files
 
 
 def export(database,directory,limit=1000):
@@ -28,13 +29,15 @@ def export(database,directory,limit=1000):
     if segment.exists():
         if segment.read_bytes()!=data:raise ValueError('Existing segment differs; preserve it for investigation.')
     else:
-        descriptor=os.open(segment,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o640)
-        with os.fdopen(descriptor,'wb') as output:output.write(data);output.flush();os.fsync(output.fileno())
+        durable_files.write_new(segment,data,mode=0o640)
+    # A cursor must never become durable ahead of its event segment.
+    durable_files.sync_directory(directory)
     descriptor,name=tempfile.mkstemp(prefix='.cursor-',dir=directory)
     try:
         with os.fdopen(descriptor,'w') as output:
             json.dump({'count':rows[-1]['id'],'head':rows[-1]['event_hash']},output,sort_keys=True);output.flush();os.fsync(output.fileno())
         os.replace(name,cursor)
+        durable_files.sync_directory(directory)
     finally:
         if os.path.exists(name):os.unlink(name)
     return len(rows)

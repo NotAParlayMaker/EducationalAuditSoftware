@@ -9,14 +9,14 @@ import maintenance
 import runtime
 import app
 import secret_config
+import durable_files
 
 MAX_DATABASE=64*1024*1024
 MAX_TOKEN=90*1024*1024
 
 
 def exclusive(path,data):
-    descriptor=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
-    with os.fdopen(descriptor,'wb') as output:output.write(data);output.flush();os.fsync(output.fileno())
+    durable_files.write_new(path,data)
 
 
 def backup(source,destination):

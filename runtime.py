@@ -9,6 +9,7 @@ import mfa
 import evidence_scan
 import json
 import math
+import durable_files
 from pathlib import Path
 
 
@@ -90,5 +91,6 @@ def record_backup_receipt(filename):
             json.dump({'format':'schooldesk.backup-receipt.v1','completed_at':time.time(),'kind':'authenticated_encrypted'},output,sort_keys=True)
             output.flush();os.fsync(output.fileno())
         os.replace(temporary,path)
+        durable_files.sync_directory(path.parent)
     finally:
         if os.path.exists(temporary):os.unlink(temporary)

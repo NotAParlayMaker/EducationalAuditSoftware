@@ -196,6 +196,19 @@ Private temporary snapshots use restricted permissions and are removed afterward
 that is not secure erasure, so use an encrypted temporary volume as needed.
 
 Review the backup service/timer and `deploy/run_backup.py`. The job creates an
+archive in a private temporary file and publishes it only after the complete file
+has been flushed. Restored database copies remain private until their integrity
+checks pass. Publication never overwrites an existing destination. On POSIX hosts,
+the containing directory is synced before success is reported. Security-feed
+segments use the same publication rules, and become durable before their cursor
+advances; a failed cursor update can be retried without duplicating the segment.
+These guarantees require a local filesystem supporting hard links and directory
+fsync. A failed operation can leave a complete published artifact; preserve it
+and use a new destination rather than overwriting it. Forced process termination
+may leave hidden temporary files in the protected directory. Investigate failed
+jobs before removing leftovers; these changes do not provide off-site durability.
+
+The scheduled job creates an
 encrypted snapshot, tests restoration, anchors the exact recovery copy, and writes
 an independent success receipt only after all steps succeed. No backup key is given
 to HTTP workers. The timer example is daily at 04:00 UTC; select the deployment's

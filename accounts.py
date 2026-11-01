@@ -145,6 +145,8 @@ def authorize_resource(user, resource, write=False):
 
 
 def authorize_audit(db, user, data, audit_id=None):
+    import audit_workflow
+    data = audit_workflow.normalize(data)
     if user is None:
         return data
     if not isinstance(data, dict):

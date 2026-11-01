@@ -129,6 +129,31 @@ class EvidenceQuarantineHTTPTest(unittest.TestCase):
     login=test_accounts.AccountHTTPTest.login
     denied=test_accounts.AccountHTTPTest.denied
 
+    def test_padded_status_cannot_bypass_quarantine_or_recent_authentication(self):
+        admin=self.login('admin')
+        record=self.call('audits',{'area':'Status security','finding':'Concern','owner':'owner','reviewer':'admin','severity':'High','due_date':'2026-12-01','remediation':'Fix','evidence':'Report'},token=admin)
+        file=self.call('audits/'+str(record['id'])+'/evidence',{'filename':'note.txt','content_base64':'ZmljdGlvbmFs'},token=admin)
+        with app.connect() as db:
+            db.execute("UPDATE audits SET status='Awaiting verification' WHERE id=?",(record['id'],))
+            db.execute("UPDATE audit_evidence SET scan_status='infected' WHERE id=?",(file['id'],))
+            db.execute("UPDATE sessions SET auth_time=? WHERE username='admin'",(time.time()-301,))
+        route='audits/'+str(record['id'])
+        for suffix in (' ', '\t', '\n', '\u00a0'):
+            with self.subTest(suffix=repr(suffix)):
+                self.denied(428,route,{'revision':file['audit_revision'],'status':'Closed'+suffix,'verification':'Checked','closure_reason':'Done'},token=admin,method='PUT')
+                self.denied(423,route,{'revision':file['audit_revision'],'status':'Awaiting verification'+suffix},token=admin,method='PUT')
+        self.call('auth/reauthenticate',{'password':'fictional-password-for-tests'},token=admin)
+        self.denied(423,route,{'revision':file['audit_revision'],'status':' Closed ','verification':'Checked','closure_reason':'Done'},token=admin,method='PUT')
+        with app.connect() as db:
+            row=db.execute('SELECT status,revision FROM audits WHERE id=?',(record['id'],)).fetchone()
+            self.assertEqual(tuple(row),('Awaiting verification',file['audit_revision']))
+
+    def test_padded_closure_cannot_reassign_reviewer_during_closure(self):
+        admin=self.login('admin')
+        record=self.call('audits',{'area':'Reviewer security','finding':'Concern','owner':'owner','reviewer':'reviewer','severity':'High','due_date':'2026-12-01','remediation':'Fix','evidence':'Report'},token=admin)
+        with app.connect() as db:db.execute("UPDATE audits SET status='Awaiting verification' WHERE id=?",(record['id'],))
+        self.denied(403,'audits/'+str(record['id']),{'revision':record['revision'],'status':'Closed ','reviewer':'admin','verification':'Checked','closure_reason':'Done'},token=admin,method='PUT')
+
     def test_infected_attachment_blocks_release_and_requires_documented_rejection(self):
         auditor=self.login('auditor');owner=self.login('owner')
         record=self.call('audits',{'area':'Demo','finding':'Fictional concern','owner':'owner','reviewer':'reviewer','severity':'High','due_date':'2026-12-01','remediation':'Fictional fix','evidence':'Other reviewed evidence'},token=auditor)

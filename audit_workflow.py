@@ -37,9 +37,22 @@ def migrate(db):
             record_event(db, record, 'legacy migration')
 
 
-def validate(data, previous=None):
+def normalize(data):
+    """Canonicalize supplied fields before authorization or lifecycle decisions."""
     if not isinstance(data, dict) or set(data) - set(FIELDS + ['actor', 'revision']):
         raise ValueError('Unknown audit fields.')
+    clean = dict(data)
+    for field in FIELDS:
+        if field in clean:
+            value = clean[field]
+            if not isinstance(value, str) or len(value) > 500:
+                raise ValueError(f'{field}: use at most 500 characters.')
+            clean[field] = value.strip()
+    return clean
+
+
+def validate(data, previous=None):
+    data = normalize(data)
     if previous and (type(data.get('revision')) is not int or data['revision'] != previous['revision']):
         raise Conflict('Audit changed. Reload it before saving.')
     if previous and previous['status'] == 'Closed' and data.get('status') != 'Open':
