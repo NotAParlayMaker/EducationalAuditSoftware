@@ -6,6 +6,7 @@ import re
 import secrets
 import time
 import security_events as events
+import mfa
 
 from security import RequestError
 
@@ -34,6 +35,7 @@ def initialize(db):
         db.execute('UPDATE sessions SET public_id=?,created_at=? WHERE token_hash=?',
                    (secrets.token_urlsafe(18),row['expires']-SESSION_SECONDS,row['token_hash']))
     db.execute('CREATE UNIQUE INDEX IF NOT EXISTS session_public_id ON sessions(public_id)')
+    mfa.initialize(db)
 
 
 def enabled(db):
@@ -58,12 +60,13 @@ def create_user(db, username, role, password):
     events.append(db,'account_created',actor='local-maintenance',target=username)
 
 
-def login(db, data, now=None):
+def login(db, data, now=None, issue_session=True):
     now = time.time() if now is None else now
     if not enabled(db):
         raise RequestError(409, 'Accounts are not configured. Use the local setup command.')
-    if not isinstance(data, dict) or set(data) != {'username', 'password'}:
+    if not isinstance(data, dict) or set(data) not in ({'username','password'},{'username','password','code'}):
         raise RequestError(400, 'Supply username and password.')
+    if 'code' in data and (not isinstance(data['code'],str) or len(data['code'])>64):raise RequestError(400,'Invalid verification code format.')
     username, password = data['username'], data['password']
     if not isinstance(username, str) or not isinstance(password, str) or len(username) > 50 or len(password) > 256:
         raise RequestError(400, 'Invalid credentials format.')
@@ -96,15 +99,22 @@ def login(db, data, now=None):
         db.commit()
         raise RequestError(401,'Invalid username or password.')
     row=fresh
+    verified=False
+    if mfa.active(db,username):
+        if not mfa.login_factor(db,username,data.get('code',''),now):
+            events.append(db,'login_failed');db.commit()
+            raise RequestError(401,'Invalid username or password.')
+        verified=True
+    if not issue_session:return {'verified_mfa':verified}
     token = secrets.token_urlsafe(32)
     db.execute('DELETE FROM sessions WHERE expires<=?', (now,))
-    db.execute('INSERT INTO sessions(token_hash,username,expires,public_id,created_at) VALUES(?,?,?,?,?)',
-               (digest(token),username,now+SESSION_SECONDS,secrets.token_urlsafe(18),now))
+    db.execute('INSERT INTO sessions(token_hash,username,expires,public_id,created_at,auth_time,mfa_verified) VALUES(?,?,?,?,?,?,?)',
+               (digest(token),username,now+SESSION_SECONDS,secrets.token_urlsafe(18),now,now,int(verified)))
     removed=db.execute('''DELETE FROM sessions WHERE username=? AND token_hash NOT IN
         (SELECT token_hash FROM sessions WHERE username=? ORDER BY created_at DESC,token_hash DESC LIMIT 10)''',(username,username)).rowcount
     if removed:events.append(db,'session_evicted',actor=username)
     events.append(db,'login_succeeded',actor=username)
-    return {'token': token, 'expires_in': SESSION_SECONDS, 'user': {'username': username, 'role': row['role']}}
+    return {'token': token, 'expires_in': SESSION_SECONDS, 'user': {'username': username, 'role': row['role']},'mfa_setup_required':mfa.required(row,db) and not verified}
 
 
 def digest(token):
@@ -117,11 +127,12 @@ def principal(db, authorization, now=None):
     token = authorization.removeprefix('Bearer ') if authorization.startswith('Bearer ') else ''
     if not 20 <= len(token) <= 256:
         raise RequestError(401, 'Sign in to continue.')
-    row = db.execute('''SELECT users.username, users.role FROM sessions JOIN users USING(username)
+    row = db.execute('''SELECT users.username, users.role, sessions.auth_time, sessions.mfa_verified FROM sessions JOIN users USING(username)
         WHERE token_hash=? AND expires>? AND active=1''', (digest(token), time.time() if now is None else now)).fetchone()
     if not row:
         raise RequestError(401, 'Session expired or invalid. Sign in again.')
-    return dict(row)
+    if mfa.active(db,row['username']) and not row['mfa_verified']:raise RequestError(401,'Sign in again with MFA.')
+    return {'username':row['username'],'role':row['role'],'_auth_time':row['auth_time'],'_mfa_verified':bool(row['mfa_verified']),'_mfa_setup_required':mfa.required(row,db) and not row['mfa_verified']}
 
 
 def authorize_resource(user, resource, write=False):
@@ -134,6 +145,8 @@ def authorize_resource(user, resource, write=False):
 
 
 def authorize_audit(db, user, data, audit_id=None):
+    import audit_workflow
+    data = audit_workflow.normalize(data)
     if user is None:
         return data
     if not isinstance(data, dict):
@@ -268,3 +281,14 @@ def require_audit_access(db,user,audit_id):
     if row is None:
         raise RequestError(404,'Audit not found.')
     return row
+
+
+def reauthenticate(db,user,authorization,data):
+    if not user or not isinstance(data,dict) or set(data) not in ({'password'},{'password','code'}):raise RequestError(400,'Supply current password and optional verification code.')
+    # Reuse the persistent login budget and password/MFA verification, then discard
+    # the temporary session and refresh only the current session's authentication.
+    result=login(db,{'username':user['username'],'password':data['password'],'code':data.get('code','')},issue_session=False)
+    changed=db.execute('UPDATE sessions SET auth_time=?,mfa_verified=? WHERE token_hash=? AND username=? AND expires>?',
+               (time.time(),int(result['verified_mfa']),digest(authorization.removeprefix('Bearer ')),user['username'],time.time())).rowcount
+    if changed!=1:raise RequestError(401,'Session revoked. Sign in again.')
+    events.append(db,'reauthenticated',actor=user['username'])

@@ -1,14 +1,16 @@
 # Schooldesk
 
-A dependency-free starter workspace for school administration and IT operations.
+A local starter workspace with optional security dependencies for school administration and IT operations.
 
 ## Run
 
 Requires Python 3.12 or newer. From this repository:
 
 ```sh
-python3 schooldesk.py init
-python3 schooldesk.py serve
+python3 -m venv .venv
+.venv/bin/python -m pip install --only-binary=:all: -r requirements-security.txt
+.venv/bin/python schooldesk.py init
+.venv/bin/python schooldesk.py serve
 ```
 
 Open your browser at `http://127.0.0.1:8000`. Set `PORT` to change the port or
@@ -32,16 +34,17 @@ student editing, deletion, and grade calculations are future work. Audit finding
 ## Validation
 
 ```sh
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
 ## Development scope
 
-This is a local prototype, bound to loopback. It requires individual accounts by default, with shared-token access available only in explicit demo mode, but no
-encryption management or production deployment configuration. Use
-fictional data only. Before handling real school records, add authenticated
-access, authorization, retention rules, backups, and appropriate privacy controls.
-No external services or credentials are required.
+This is a loopback-bound prototype with account, role, MFA, and review controls.
+Explicit demo mode is available for fictional data. Cloud configuration is included,
+but a live deployment has not been provisioned. Before real school use, complete
+target-specific IAM, encrypted volumes, retention, privacy, recovery, and security
+reviews. Local offline features need no external provider account; security features
+require the pinned dependency set and operator-managed keys.
 
 
 ## Audit drafting assistant
@@ -210,7 +213,7 @@ Login attempts have a database-backed global budget of ten per minute, including
 failed attempts, unknown names, and successes. Credential failures use the same
 message and password-hash work. The global budget limits username/IP rotation but
 can temporarily block legitimate logins; wait a minute or investigate locally.
-No MFA, password recovery email, network deployment, or per-user quotas are included.
+TOTP MFA and fresh authentication are available; password recovery email and an actual network deployment are not configured.
 
 
 ## Evidence, usage limits, and recovery
@@ -280,3 +283,42 @@ For an intentional local fictional-data demo, use `python3 schooldesk.py serve
 cannot bypass accounts already provisioned in the database. Custom HTTP servers
 also deny unprovisioned APIs unless explicitly marked as demo servers. The UI
 shows a demo banner when that mode is active. See [access boundaries](docs/access-boundaries.md).
+
+## Reliable data movement
+
+The Data imports and exports panel now supports versioned CSV/JSON previews,
+explicit approval, atomic batch imports, exact duplicate detection, safe retries,
+and caller-only batch history. Audit imports create drafts and cannot restore or
+bypass approvals. Exports are paginated and enforce the same record access rules
+as the application, with spreadsheet-formula protection for CSV.
+
+See [the pipeline guide](docs/data-pipeline.md) for API contracts, limits, examples,
+error handling, and the difference between review exports and recovery backups.
+
+## AI abuse and integrity commitments
+
+The provider boundary now blocks redirects, malformed/incomplete output, tool calls,
+links, and narrow obfuscated identifier examples. Notes remain untrusted data;
+models still cannot execute tools or approve findings. HTTP workers are capped to
+limit local resource exhaustion.
+
+Optional `maintenance.py anchor-create` and `anchor-verify` commands create and
+check private Merkle snapshot bundles with a compact public hash commitment. This
+can support a separately reviewed external witness or blockchain anchor, but no
+wallet, chain connection, or transaction is configured. School records must never
+be placed on a public chain. See [AI defenses and integrity anchoring](docs/ai-and-integrity.md).
+
+
+## Cloud security rollout controls
+
+MFA enrollment, single-use recovery codes, and five-minute step-up authentication
+now protect sensitive operations. The cloud profile requires MFA for every role,
+forbids demos, and accepts only a configured local HTTPS gateway. Evidence can be
+scanned through local clamd, quarantined on failure, rescanned, or rejected with a
+retained audit reason. Verification checks active attachments' scan and integrity state.
+
+Authenticated encrypted backups, a separate backup-worker identity/key, protected
+freshness receipts, incremental security feeds, and nginx/systemd/collector examples
+are included. They require operator configuration; no cloud resources or remote
+messages are provisioned automatically. Read [the cloud security runbook](docs/cloud-security-runbook.md)
+for setup, recovery, key custody, dependency installation, and release gates.

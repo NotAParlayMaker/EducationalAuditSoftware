@@ -8,9 +8,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned security dependencies
+        run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install --only-binary=:all: -r requirements-security.txt
       - name: Run offline regression and security tests
-        run: python3 -m unittest discover -s tests -v
+        run: .ci-venv/bin/python -m unittest discover -s tests -v
       - name: Check Python and JavaScript syntax
         run: |
-          python3 -m compileall -q app.py assistant.py audit_workflow.py security.py accounts.py manage.py operations.py maintenance.py security_events.py runtime.py schooldesk.py tests
+          .ci-venv/bin/python -m compileall -q app.py assistant.py audit_workflow.py security.py accounts.py manage.py operations.py maintenance.py security_events.py runtime.py schooldesk.py data_pipeline.py integrity_anchor.py mfa.py evidence_scan.py secret_config.py deployment.py secure_backup.py security_feed.py durable_files.py deploy tests
           node --check static/app.js

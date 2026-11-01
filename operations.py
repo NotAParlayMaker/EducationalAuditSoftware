@@ -9,6 +9,8 @@ import time
 from security import RequestError
 import accounts
 import audit_workflow
+import evidence_scan
+import security_events as events
 
 AI_SLOTS = threading.BoundedSemaphore(2)
 MAX_EVIDENCE = 256 * 1024
@@ -24,6 +26,8 @@ def initialize(db):
             media_type TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL,
             actor TEXT NOT NULL, created_at REAL NOT NULL, content BLOB NOT NULL);
     ''')
+    columns={row[1] for row in db.execute('PRAGMA table_info(audit_evidence)')}
+    if 'scan_status' not in columns:db.execute("ALTER TABLE audit_evidence ADD COLUMN scan_status TEXT NOT NULL DEFAULT 'legacy_unscanned'")
 
 
 def reserve_ai(db, username, now=None):
@@ -42,7 +46,7 @@ def reserve_ai(db, username, now=None):
     db.executemany('INSERT OR REPLACE INTO request_budgets VALUES(?,?,?,?)',updates)
 
 
-def add_evidence(db, user, audit_id, data):
+def authorize_upload(db,user,audit_id):
     if not user:
         raise RequestError(403,'Individual account sign-in is required for evidence uploads.')
     row=accounts.require_audit_access(db,user,audit_id)
@@ -50,6 +54,10 @@ def add_evidence(db, user, audit_id, data):
         raise RequestError(409,'Reopen the finding before adding evidence.')
     if user['role'] not in ('administrator','auditor') and not (user['role']=='remediation_owner' and row['owner']==user['username']):
         raise RequestError(403,'Only an assigned owner or auditor can upload evidence.')
+    return row
+
+
+def validate_upload(data):
     if not isinstance(data,dict) or set(data)!={'filename','content_base64'}:
         raise RequestError(400,'Supply a filename and base64 content.')
     filename=data['filename']
@@ -77,17 +85,26 @@ def add_evidence(db, user, audit_id, data):
     else:
         raise RequestError(400,'Only UTF-8 .txt and PDF-signature .pdf evidence is accepted.')
     checksum=hashlib.sha256(content).hexdigest()
+    return filename,content,media_type,checksum
+
+
+def add_evidence(db,user,audit_id,data,scan_result=None):
+    row=authorize_upload(db,user,audit_id)
+    filename,content,media_type,checksum=validate_upload(data)
     # Keep per-record storage bounded as well as individual file size.
     if db.execute('SELECT count(*) FROM audit_evidence WHERE audit_id=?',(audit_id,)).fetchone()[0]>=20:
         raise RequestError(413,'This finding already has the maximum 20 attachments.')
-    cursor=db.execute('INSERT INTO audit_evidence(audit_id,filename,media_type,sha256,size,actor,created_at,content) VALUES(?,?,?,?,?,?,?,?)',
-        (audit_id,filename,media_type,checksum,len(content),user['username'],time.time(),content))
+    scan_status=evidence_scan.scan(content) if scan_result is None else scan_result
+    if scan_status not in ('clean','infected','unavailable','unscanned'):raise RequestError(503,'Scanner returned an unsupported result.')
+    cursor=db.execute('INSERT INTO audit_evidence(audit_id,filename,media_type,sha256,size,actor,created_at,content,scan_status) VALUES(?,?,?,?,?,?,?,?,?)',
+        (audit_id,filename,media_type,checksum,len(content),user['username'],time.time(),content,scan_status))
+    if scan_status!='unscanned':events.append(db,'evidence_scanned' if scan_status=='clean' else 'evidence_quarantined',actor=user['username'])
     revision=row['revision']+1
     db.execute('UPDATE audits SET revision=? WHERE id=?',(revision,audit_id))
     snapshot=dict(row)
     snapshot.update(revision=revision,attachment_added=cursor.lastrowid,attachment_sha256=checksum)
     audit_workflow.record_event(db,snapshot,user['username'])
-    return {'id':cursor.lastrowid,'filename':filename,'sha256':checksum,'size':len(content),'audit_revision':revision}
+    return {'id':cursor.lastrowid,'filename':filename,'sha256':checksum,'size':len(content),'audit_revision':revision,'scan_status':scan_status,'released':evidence_scan.released(scan_status)}
 
 
 def page_query(query):
@@ -111,3 +128,9 @@ def audit_filters(query):
     if query.get('overdue',[''])[0]=='1':
         clauses.append("due_date<>'' AND due_date<date('now') AND status<>'Closed'")
     return (' WHERE '+' AND '.join(clauses) if clauses else ''),params
+
+
+def verify_attachments(db,audit_id):
+    for row in db.execute("SELECT content,sha256,size,scan_status FROM audit_evidence WHERE audit_id=? AND scan_status<>'rejected'",(audit_id,)):
+        if not evidence_scan.released(row['scan_status']) or not isinstance(row['content'],bytes) or hashlib.sha256(row['content']).hexdigest()!=row['sha256'] or len(row['content'])!=row['size']:
+            raise RequestError(423,'All active evidence must pass integrity and scanning checks before verification or closure.')

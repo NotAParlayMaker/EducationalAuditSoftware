@@ -14,3 +14,15 @@ data/
 
 work/
 backups/
+
+.ci-venv/
+*.key
+*.db.enc
+private-anchor*.json
+checkpoint-*.json
+recovery-codes*.txt
+proxy-token.conf
+proxy-token
+mfa-key
+backup-key
+security-feed/
