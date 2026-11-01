@@ -12,7 +12,7 @@ Install the pinned security dependency set in a virtual environment:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install --only-binary=:all: -r requirements-security.txt
+.venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-security.txt
 ```
 
 The core local application can still run with standard-library features, but MFA,

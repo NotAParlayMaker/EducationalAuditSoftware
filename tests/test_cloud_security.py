@@ -112,6 +112,33 @@ class MFAHTTPTest(unittest.TestCase):
         result=self.call('auth/login',{'username':'admin','password':'fictional-password-for-tests','code':confirmed['recovery_codes'][0]})
         self.assertIn('token',result)
 
+    def test_valid_password_and_mfa_recover_from_targeted_username_backoff(self):
+        enrollment,_,confirmed=self.enroll(self.login('admin'))
+        for _ in range(3):self.denied(401,'auth/login',{'username':'admin','password':'attacker-guess'})
+        with app.connect() as db:db.execute('UPDATE login_user_budget SET next_attempt=? WHERE identity=?',(time.time()+300,accounts.digest('admin')))
+        self.denied(429,'auth/login',{'username':'admin','password':'fictional-password-for-tests'})
+        self.denied(429,'auth/login',{'username':'admin','password':'fictional-password-for-tests','code':'recovery-'+'0'*32})
+        self.denied(429,'auth/login',{'username':'admin','password':'attacker-guess','code':'123456'})
+        result=self.call('auth/login',{'username':'admin','password':'fictional-password-for-tests','code':confirmed['recovery_codes'][0]})
+        self.assertIn('token',result)
+        with app.connect() as db:self.assertIsNone(db.execute('SELECT 1 FROM login_user_budget WHERE identity=?',(accounts.digest('admin'),)).fetchone())
+        self.denied(401,'auth/login',{'username':'admin','password':'fictional-password-for-tests','code':confirmed['recovery_codes'][0]})
+        with app.connect() as db:db.execute('INSERT OR REPLACE INTO login_user_budget VALUES(?,?,?,?)',(accounts.digest('admin'),10,time.time()+300,time.time()))
+        code=mfa.totp(enrollment['secret'],int(time.time()//30)+1)
+        self.assertIn('token',self.call('auth/login',{'username':'admin','password':'fictional-password-for-tests','code':code}))
+
+    def test_mfa_recovery_does_not_bypass_global_ceiling_or_password_only_policy(self):
+        token=self.login('admin')
+        with app.connect() as db:db.execute('INSERT OR REPLACE INTO login_user_budget VALUES(?,?,?,?)',(accounts.digest('admin'),10,time.time()+300,time.time()))
+        self.denied(429,'auth/login',{'username':'admin','password':'fictional-password-for-tests','code':'123456'})
+        # Remove only the test attack budget so enrollment can verify the password.
+        with app.connect() as db:db.execute('DELETE FROM login_user_budget')
+        _,_,confirmed=self.enroll(token)
+        with app.connect() as db:
+            db.execute('INSERT OR REPLACE INTO login_user_budget VALUES(?,?,?,?)',(accounts.digest('admin'),10,time.time()+300,time.time()))
+            db.execute('INSERT OR REPLACE INTO login_budget VALUES(1,?,?)',(time.time(),accounts.GLOBAL_LOGIN_LIMIT))
+        self.denied(429,'auth/login',{'username':'admin','password':'fictional-password-for-tests','code':confirmed['recovery_codes'][0]})
+
     def test_mfa_seed_is_bound_to_account_and_bad_key_fails_closed(self):
         value,code,confirmed=self.enroll(self.login('admin'))
         with patch.dict(os.environ,{'SCHOOL_MFA_KEY':Fernet.generate_key().decode()}):
