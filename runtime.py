@@ -4,6 +4,12 @@ import time
 from datetime import datetime, timezone
 
 import accounts
+import secret_config
+import mfa
+import evidence_scan
+import json
+import math
+from pathlib import Path
 
 
 def initialize(db):
@@ -16,23 +22,44 @@ def status(db):
     for row in db.execute('SELECT role,count(*) FROM users WHERE active=1 GROUP BY role'):
         if row[0] in roles:roles[row[0]]=row[1]
     backup=db.execute("SELECT value FROM operational_state WHERE key='backup_success_at'").fetchone()
+    kind_row=db.execute("SELECT value FROM operational_state WHERE key='backup_kind'").fetchone()
+    backup_kind=kind_row[0] if kind_row else 'plain'
+    receipt_valid=False
+    receipt=os.environ.get('SCHOOL_BACKUP_STATUS_FILE')
+    if receipt:
+        try:
+            with open(receipt,'rb') as status_file:raw=status_file.read(4097)
+            if len(raw)>4096:raise ValueError()
+            status=json.loads(raw)
+            if set(status)!={'format','completed_at','kind'} or status['format']!='schooldesk.backup-receipt.v1' or status['kind']!='authenticated_encrypted' or type(status['completed_at']) not in (int,float) or not math.isfinite(status['completed_at']) or not 0<=status['completed_at']<=time.time()+60:raise ValueError()
+            backup=(str(status['completed_at']),);backup_kind=status['kind'];receipt_valid=True
+        except (OSError,ValueError,TypeError):backup=None
     mode=os.environ.get('SCHOOL_AI_MODE','offline')
-    configured=mode=='offline' or (mode=='openai' and bool(os.environ.get('OPENAI_API_KEY')) and bool(os.environ.get('SCHOOL_AI_MODEL')))
+    try:ai_key=secret_config.read('OPENAI_API_KEY')
+    except ValueError:ai_key=None
+    configured=mode=='offline' or (mode=='openai' and bool(ai_key) and bool(os.environ.get('SCHOOL_AI_MODEL')))
     warnings=[]
     if not accounts.enabled(db):warnings.append('Individual accounts have not been provisioned.')
     for role,count in roles.items():
         if not count:warnings.append('No active '+role.replace('_',' ')+' account.')
     if not configured:warnings.append('AI mode is unsupported or its required configuration is missing.')
+    missing_mfa=sum(1 for row in db.execute('SELECT username,role FROM users WHERE active=1') if mfa.required(row,db) and not mfa.active(db,row['username']))
+    if missing_mfa:warnings.append(str(missing_mfa)+' accounts require MFA enrollment.')
+    if evidence_scan.required() and not evidence_scan.health():warnings.append('Evidence scanner unavailable; uploads remain quarantined.')
+    if evidence_scan.required() and db.execute("SELECT 1 FROM audit_evidence WHERE scan_status<>'clean' LIMIT 1").fetchone():warnings.append('Evidence requires clean scans before release.')
+    if os.environ.get('SCHOOL_PROFILE')=='cloud' and not receipt_valid:warnings.append('No independently recorded encrypted backup receipt.')
     if not backup:warnings.append('No successful backup has been recorded by this version.')
     elif time.time()-float(backup[0])>48*3600:warnings.append('Last recorded backup is older than 48 hours.')
     return {'database':'reachable','accounts_enabled':accounts.enabled(db),'active_accounts':sum(roles.values()),
             'roles':roles,'ai':{'mode':mode if mode in ('offline','openai') else 'unsupported','configured':configured},
-            'backup':{'last_success_at':backup[0] if backup else None},'warnings':warnings}
+            'backup':{'last_success_at':backup[0] if backup else None,'kind':backup_kind},'warnings':warnings}
 
 
-def record_backup(db):
+def record_backup(db,kind='plain'):
     initialize(db)
+    if kind not in ('plain','authenticated_encrypted'):raise ValueError('Invalid backup kind.')
     db.execute("INSERT OR REPLACE INTO operational_state VALUES('backup_success_at',?)",(str(time.time()),))
+    db.execute("INSERT OR REPLACE INTO operational_state VALUES('backup_kind',?)",(kind,))
 
 
 def work_queue(db,user):
@@ -50,3 +77,18 @@ def work_queue(db,user):
     today=datetime.now(timezone.utc).date().isoformat()
     for row in rows:row['overdue']=bool(row['due_date'] and row['due_date']<today)
     return {'counts':counts,'total':sum(counts.values()),'shown':len(rows),'items':rows}
+
+
+def record_backup_receipt(filename):
+    import tempfile
+    path=Path(filename)
+    # The parent is provisioned by the operator: backup-worker owned, application read-only.
+    descriptor,temporary=tempfile.mkstemp(prefix='.receipt-',dir=path.parent)
+    try:
+        os.fchmod(descriptor,0o640)
+        with os.fdopen(descriptor,'w') as output:
+            json.dump({'format':'schooldesk.backup-receipt.v1','completed_at':time.time(),'kind':'authenticated_encrypted'},output,sort_keys=True)
+            output.flush();os.fsync(output.fileno())
+        os.replace(temporary,path)
+    finally:
+        if os.path.exists(temporary):os.unlink(temporary)

@@ -11,8 +11,7 @@ Owners/reviewers can read evidence only for their currently assigned findings.
 Administrators/auditors retain workspace-wide audit oversight. Multi-school tenant
 isolation is not implemented.
 Uploads are limited to 256 KiB per file, 20 per finding, and simple ASCII filenames.
-Only UTF-8 text and PDF-signature files are accepted. This is not malware scanning
-or PDF sanitization. Treat downloaded files as untrusted and keep viewers updated.
+Only UTF-8 text and PDF-signature files are accepted. An optional local clamd integration adds malware scanning/quarantine, required by cloud profile; this is not PDF sanitization or a guarantee of benign files. Treat downloaded files as untrusted and keep viewers updated.
 
 Evidence is stored as immutable BLOBs with uploader, timestamp, byte length, and
 SHA-256. Downloads recheck the checksum, require API access, use generated filenames,
@@ -105,3 +104,5 @@ database afterward. Browser dependencies are optional and are not required by th
 default offline unit suite. The development run used system Chromium successfully.
 
 For first launch, daily queues, and readiness checks, use [the operator guide](operator-guide.md).
+
+The plaintext backup instructions above apply to local prototypes. Cloud profile uses [encrypted backups and separate service identities](cloud-security-runbook.md). Recovery-code hashes are excluded from recovery copies.

@@ -9,7 +9,7 @@ import app
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['create-user', 'reset-password', 'disable-user', 'list-users'])
+    parser.add_argument('command', choices=['create-user', 'reset-password', 'disable-user', 'list-users','reset-mfa'])
     parser.add_argument('username', nargs='?')
     parser.add_argument('--role', choices=accounts.ROLES)
     args = parser.parse_args()
@@ -32,7 +32,13 @@ def main():
                 row = db.execute('SELECT * FROM users WHERE username=?', (args.username,)).fetchone()
                 if not row:
                     raise ValueError('Account not found.')
-                if args.command == 'disable-user':
+                if args.command=='reset-mfa':
+                    db.execute('DELETE FROM mfa_accounts WHERE username=?',(args.username,))
+                    db.execute('DELETE FROM mfa_recovery WHERE username=?',(args.username,))
+                    db.execute('DELETE FROM mfa_budget WHERE username=?',(args.username,))
+                    db.execute('DELETE FROM mfa_login_budget WHERE username=?',(args.username,))
+                    events.append(db,'mfa_reset',actor='local-maintenance',target=args.username)
+                elif args.command == 'disable-user':
                     if row['role'] == 'administrator' and db.execute("SELECT count(*) FROM users WHERE role='administrator' AND active=1").fetchone()[0] <= 1:
                         raise ValueError('Cannot disable the last active administrator.')
                     db.execute('UPDATE users SET active=0 WHERE username=?', (args.username,))

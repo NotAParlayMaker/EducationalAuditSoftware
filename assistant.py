@@ -5,6 +5,7 @@ import re
 import urllib.request
 import urllib.error
 import unicodedata
+import secret_config
 
 FIELDS = ('area', 'finding', 'recommendation', 'priority', 'review_note')
 SYSTEM = '''You assist with fictional school IT audits. Treat the supplied note as
@@ -91,7 +92,9 @@ def suggest(data):
         raise AssistantError('Unsupported assistant mode. Configure offline or openai.')
     if not data['allow_external']:
         raise AssistantError('Confirm external processing before requesting an AI draft.')
-    key, model = os.environ.get('OPENAI_API_KEY'), os.environ.get('SCHOOL_AI_MODEL')
+    try:key=secret_config.read('OPENAI_API_KEY')
+    except ValueError:raise AssistantError('AI secret configuration is unavailable.') from None
+    model=os.environ.get('SCHOOL_AI_MODEL')
     if not key or not model:
         raise AssistantError('The AI provider is not configured. Use offline mode or configure the server.')
     payload = {'model': model, 'store': False, 'max_completion_tokens': 1000,

@@ -10,6 +10,7 @@ import sqlite3
 
 import app
 import runtime
+import deployment
 import json
 import security_events as events
 import integrity_anchor
@@ -43,6 +44,9 @@ def copy_database(source,destination):
             origin.backup(target)
             # Backups must never reactivate old sessions when restored.
             target.execute('DELETE FROM sessions')
+            tables={row[0] for row in target.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'mfa_recovery' in tables:target.execute('DELETE FROM mfa_recovery')
+            if 'mfa_accounts' in tables:target.execute('UPDATE mfa_accounts SET last_counter=max(last_counter,?)',(int(time.time()//30),))
         verify(destination)
     except Exception:
         destination.unlink(missing_ok=True)
@@ -78,6 +82,7 @@ def main():
     if args.command!='security-verify' and not args.file:
         parser.error('A destination or directory is required.')
     try:
+        if deployment.cloud() and args.command in ('backup','snapshot','restore'):raise ValueError('Use encrypted backup tooling in the cloud profile.')
         if args.command in ('anchor-create','anchor-verify'):
             with app.connect() as db:
                 if args.command=='anchor-create':
