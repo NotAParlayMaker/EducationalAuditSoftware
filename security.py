@@ -11,6 +11,13 @@ class RequestError(ValueError):
         super().__init__(message)
 
 
+AUTH_THROTTLE_MESSAGE = 'Authentication temporarily unavailable. Try again later.'
+
+
+def auth_throttled():
+    return RequestError(429, AUTH_THROTTLE_MESSAGE)
+
+
 def check_request(handler, write=False, authenticate=True):
     hosts = handler.headers.get_all('Host', [])
     trusted=deployment.gateway(handler)

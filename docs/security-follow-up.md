@@ -1,5 +1,8 @@
 # Availability, transport, and dependency follow-up
 
+The subsequent [factor-first backoff update](authentication-backoff.md) replaces
+the authentication ordering and shared normal-MFA-budget behavior described below.
+
 ## Targeted username backoff
 
 A valid password plus an enabled MFA factor can now authenticate during username
@@ -102,5 +105,5 @@ Enable **Secret scanning** and **Push protection** under repository security
 settings and verify their enabled state. These settings are separate from the
 ruleset JSON. Review GitHub plan/visibility requirements and restricted bypasses.
 Passing automated checks are evidence for a human reviewer, not a substitute for
-review of authentication, cryptography, or deployment changes. This follow-up is
-left as a draft PR for that review.
+review of authentication, cryptography, or deployment changes. Have an independent
+human review those changes before merging.

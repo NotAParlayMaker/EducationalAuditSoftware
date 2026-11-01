@@ -332,3 +332,6 @@ See [the security audit response and upgrade steps](docs/security-audit-response
 See [the availability and dependency follow-up](docs/security-follow-up.md) for
 MFA recovery during targeted backoff, the fifteen-second connection deadline,
 hash-verified installation, and the repository ruleset owner action.
+
+[Uniform lockouts and factor-first recovery](docs/authentication-backoff.md)
+documents the independent backoff-factor budget and authentication order.

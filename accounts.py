@@ -8,7 +8,7 @@ import time
 import security_events as events
 import mfa
 
-from security import RequestError
+from security import RequestError, auth_throttled
 
 ROLES = ('administrator', 'registrar', 'auditor', 'remediation_owner', 'reviewer')
 ITERATIONS = 600_000
@@ -85,12 +85,16 @@ def login(db, data, now=None, issue_session=True):
     budget=db.execute('SELECT * FROM login_user_budget WHERE identity=?',(identity,)).fetchone()
     backoff=bool(budget and budget['next_attempt']>now)
     factor_candidate=isinstance(data.get('code'),str) and re.fullmatch(r'(?:[0-9]{6}|recovery-[a-f0-9]{32})',data['code'])
-    # A username alone must not prevent its owner using both authentication
-    # factors. Candidate codes still incur the global CPU ceiling and the
-    # existing MFA guessing budget after password verification.
+    # Backoff recovery has its own factor budget, checked before PBKDF2. It
+    # must never consume the normal password-first MFA budget.
     if backoff and not factor_candidate:
         db.commit()
-        raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
+        raise auth_throttled()
+    factor_proof=None
+    if not backoff:
+        # Check before the password so an exhausted MFA budget cannot turn
+        # 401 versus 429 into a password-validity oracle.
+        mfa.enforce_login_budget(db,username,now)
     row = db.execute('SELECT * FROM login_budget WHERE id=1').fetchone()
     start, count = (row['start'], row['attempts']) if row and now - row['start'] < 60 else (now, 0)
     if count >= GLOBAL_LOGIN_LIMIT:
@@ -98,7 +102,12 @@ def login(db, data, now=None, issue_session=True):
             db.execute('UPDATE login_budget SET attempts=? WHERE id=1',(GLOBAL_LOGIN_LIMIT+1,))
             events.append(db,'login_throttled')
         db.commit()
-        raise RequestError(429, 'Too many login attempts. Try again after one minute.')
+        raise auth_throttled()
+    if backoff:
+        factor_proof=mfa.backoff_factor(db,username,data['code'],now)
+        if factor_proof is None:
+            db.commit()
+            raise auth_throttled()
     db.execute('INSERT OR REPLACE INTO login_budget VALUES(1,?,?)', (start, count + 1))
     db.commit()  # Keep failed attempts even if authentication fails.
     row = db.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
@@ -109,7 +118,7 @@ def login(db, data, now=None, issue_session=True):
         if not backoff:login_failure(db,identity,now)
         events.append(db,'login_failed')
         db.commit()
-        if backoff:raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
+        if backoff:raise auth_throttled()
         raise RequestError(401, 'Invalid username or password.')
     # Recheck after password hashing so a concurrent reset/disable cannot issue a
     # fresh session from credentials that have just been revoked.
@@ -119,20 +128,26 @@ def login(db, data, now=None, issue_session=True):
         if not backoff:login_failure(db,identity,now)
         events.append(db,'login_failed')
         db.commit()
-        if backoff:raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
+        if backoff:raise auth_throttled()
         raise RequestError(401,'Invalid username or password.')
     row=fresh
-    if backoff and not mfa.active(db,username):
-        db.commit()
-        raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
     verified=False
-    if mfa.active(db,username):
+    if backoff:
+        # Revalidate and consume only after the fresh password check, in this
+        # write transaction. A wrong password cannot burn a valid factor;
+        # concurrent consumption or a changed enrollment invalidates the proof.
+        if not mfa.consume(db,username,data['code'],now,expected=factor_proof):
+            db.commit()
+            raise auth_throttled()
+        verified=True
+        db.execute('DELETE FROM mfa_login_budget WHERE username=?',(username,))
+    elif mfa.active(db,username):
         if not mfa.login_factor(db,username,data.get('code',''),now):
             events.append(db,'login_failed');db.commit()
-            if backoff:raise RequestError(429,'Too many attempts for this account. Wait before retrying.')
             raise RequestError(401,'Invalid username or password.')
         verified=True
     db.execute('DELETE FROM login_user_budget WHERE identity=?',(identity,))
+    db.execute('DELETE FROM mfa_backoff_budget WHERE identity=?',(identity,))
     if not issue_session:return {'verified_mfa':verified}
     token = secrets.token_urlsafe(32)
     db.execute('DELETE FROM sessions WHERE expires<=?', (now,))
@@ -276,7 +291,7 @@ def change_password(db,user,data,now=None):
             db.execute('UPDATE password_budget SET attempts=6 WHERE username=?',(username,))
             events.append(db,'password_change_throttled',actor=username)
         db.commit()
-        raise RequestError(429,'Too many password changes attempted. Wait fifteen minutes.')
+        raise auth_throttled()
     db.execute('INSERT OR REPLACE INTO password_budget VALUES(?,?,?)',(username,start,count+1))
     db.commit()
     row=db.execute('SELECT * FROM users WHERE username=?',(username,)).fetchone()
