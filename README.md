@@ -280,3 +280,14 @@ For an intentional local fictional-data demo, use `python3 schooldesk.py serve
 cannot bypass accounts already provisioned in the database. Custom HTTP servers
 also deny unprovisioned APIs unless explicitly marked as demo servers. The UI
 shows a demo banner when that mode is active. See [access boundaries](docs/access-boundaries.md).
+
+## Reliable data movement
+
+The Data imports and exports panel now supports versioned CSV/JSON previews,
+explicit approval, atomic batch imports, exact duplicate detection, safe retries,
+and caller-only batch history. Audit imports create drafts and cannot restore or
+bypass approvals. Exports are paginated and enforce the same record access rules
+as the application, with spreadsheet-formula protection for CSV.
+
+See [the pipeline guide](docs/data-pipeline.md) for API contracts, limits, examples,
+error handling, and the difference between review exports and recovery backups.

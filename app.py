@@ -7,6 +7,7 @@ import accounts
 import security_events as events
 import operations
 import runtime
+import data_pipeline
 from urllib.parse import urlsplit, parse_qs
 import hashlib
 import socket
@@ -55,6 +56,7 @@ def initialize():
         accounts.initialize(db)
         operations.initialize(db)
         runtime.initialize(db)
+        data_pipeline.initialize(db)
 
 
 def validate(resource, data):
@@ -165,6 +167,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply(200, {'accounts_enabled': accounts.enabled(db),'demo_enabled':not accounts.enabled(db) and bool(getattr(self.server,'allow_demo',False))})
         if not self.guard():
             return
+        if self.path.split('?')[0]=='/api/pipeline/batches':
+            if not self.user:raise security.RequestError(403,'Individual account sign-in is required.')
+            query=parse_qs(urlsplit(self.path).query,max_num_fields=4);limit,offset=operations.page_query(query)
+            with connect() as db:
+                rows=[dict(row) for row in db.execute("SELECT id,resource,CASE WHEN status='prepared' AND expires_at<unixepoch() THEN 'expired' ELSE status END AS status,row_count,inserted,skipped,created_at,expires_at FROM pipeline_batches WHERE actor=? ORDER BY created_at DESC LIMIT ? OFFSET ?",(self.user['username'],limit,offset))]
+            return self.reply(200,rows)
         if self.path=='/api/work-queue':
             with connect() as db:return self.reply(200,runtime.work_queue(db,self.user))
         if self.path=='/api/operations/status':
@@ -254,6 +262,19 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(200, result)
         if not self.guard(write=True):
             return
+        if self.path in ('/api/pipeline/preview','/api/pipeline/commit','/api/pipeline/export'):
+            data=security.read_json(self,maximum=512000)
+            with connect() as db:
+                if self.path=='/api/pipeline/preview':
+                    result=data_pipeline.preview(db,self.user,data,validate,SCHEMAS)
+                elif self.path=='/api/pipeline/commit':
+                    result=data_pipeline.commit(db,self.user,data,validate,SCHEMAS)
+                else:
+                    if set(data)!={'resource','format','after_id','limit'} or data['format'] not in ('json','csv'):
+                        raise security.RequestError(400,'Supply resource, format, cursor, and limit.')
+                    result=data_pipeline.export_page(db,self.user,data['resource'],SCHEMAS,data['after_id'],data['limit'])
+                    if data['format']=='csv':result['csv']=data_pipeline.csv_export(result,SCHEMAS[data['resource']])
+            return self.reply(200,result)
         if self.path in ('/api/auth/revoke-session','/api/auth/revoke-all','/api/auth/change-password'):
             data=security.read_json(self)
             with connect() as db:

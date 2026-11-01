@@ -13,6 +13,7 @@ const label = name => name.replaceAll('_',' ').replace(/\b\w/g,char=>char.toUppe
 const canReadModule = key => !signedInUser || signedInUser.role==='administrator' || (signedInUser.role==='auditor'&&['audits','assets','tickets'].includes(key)) || (['remediation_owner','reviewer'].includes(signedInUser.role)&&key==='audits');
 const tableFields = key => key==='audits'?['area','finding','status','owner','severity','due_date','reviewer']:modules[key].fields;
 let workspaceToken = '', signedInUser = null, sessionGeneration=0, assignmentUsers=[];
+let preparedBatch=null, exportCursor=0;
 async function api(path, options = {}) { const generation=sessionGeneration; options.headers = {...options.headers, 'X-Schooldesk-Request':'1'}; if(workspaceToken) options.headers.Authorization = 'Bearer '+workspaceToken; const response = await fetch('/api/'+path, options); const data = await response.json(); if(generation!==sessionGeneration)throw new Error('Session changed. Request discarded.'); if(response.status===401&&signedInUser&&!['auth/login','auth/change-password'].includes(path))signedOut('Session expired or revoked. Sign in again.'); if(!response.ok) throw new Error(data.error || 'Request failed'); return data; }
 function cell(tag, text) { const element=document.createElement(tag); element.textContent=text; return element; }
 function drawRows() {
@@ -141,6 +142,7 @@ $('login-form').onsubmit = async event => {
  $('lock-workspace').hidden=false;$('identity').after($('lock-workspace'));
  document.querySelectorAll('nav button').forEach(button=>{button.hidden=!!button.dataset.key&&!canReadModule(button.dataset.key);});
  assignmentUsers=await api('users');
+ setupPipeline();
  await show(null);
  $('identity').textContent='Signed in as '+signedInUser.username+' · '+signedInUser.role+' · session expires in one hour';
 
@@ -185,7 +187,7 @@ async function auditEvidence(row) {
 }
 
 function signedOut(message) {
- workspaceToken='';signedInUser=null;sessionGeneration++;
+ workspaceToken='';signedInUser=null;sessionGeneration++;$('pipeline-panel').hidden=true;resetPipeline();$('pipeline-file').value='';$('pipeline-job-list').replaceChildren();
  $('security-panel').hidden=true;$('module').hidden=true;$('overview').hidden=true;
  $('queue-items').replaceChildren();$('operations-status').replaceChildren();$('operations-card').hidden=true;assignmentUsers=[];$('account-tools').open=false;
  $('form').replaceChildren();$('message').textContent='';$('security-verify-status').textContent='';$('cards').replaceChildren();$('rows').replaceChildren();$('sessions-list').replaceChildren();$('security-events').replaceChildren();
@@ -240,3 +242,53 @@ async function refreshReadiness(){
  }catch(error){$('operations-status').textContent=error.message;}
 }
 $('operations-refresh').onclick=refreshReadiness;
+
+function resetPipeline(){preparedBatch=null;exportCursor=0;$('pipeline-preview').replaceChildren();$('pipeline-confirm').checked=false;$('pipeline-commit').disabled=true;$('pipeline-export-next').disabled=true;$('pipeline-status').textContent='';}
+function setupPipeline(){
+ resetPipeline();$('pipeline-panel').hidden=false;$('pipeline-resource').replaceChildren();
+ for(const key of Object.keys(modules).filter(canReadModule)){const option=cell('option',modules[key].title);option.value=key;$('pipeline-resource').append(option);}
+ updatePipelineAccess();
+}
+function updatePipelineAccess(){resetPipeline();const resource=$('pipeline-resource').value;$('pipeline-import-tools').hidden=!signedInUser||!(signedInUser.role==='administrator'||(signedInUser.role==='auditor'&&resource==='audits'));}
+$('pipeline-resource').onchange=()=>{$('pipeline-file').value='';updatePipelineAccess();};
+$('pipeline-file').onchange=resetPipeline;
+$('pipeline-export-format').onchange=()=>{exportCursor=0;$('pipeline-export-next').disabled=true;};
+$('pipeline-confirm').onchange=()=>{$('pipeline-commit').disabled=!preparedBatch||!$('pipeline-confirm').checked;};
+$('pipeline-form').onsubmit=async event=>{
+ event.preventDefault();resetPipeline();const file=$('pipeline-file').files[0],resource=$('pipeline-resource').value;const button=event.target.querySelector('button');button.disabled=true;
+ try{
+ if(!file||file.size>262144)throw new Error('Choose a CSV or JSON file up to 256 KiB.');
+ const text=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());
+ let source={schema_version:1,resource};
+ if(file.name.toLowerCase().endsWith('.csv'))source={...source,format:'csv',data:text};
+ else if(file.name.toLowerCase().endsWith('.json'))source={...source,format:'json',data:text};
+ else throw new Error('Choose a .csv or .json file.');
+ const result=await api('pipeline/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(source)});
+ if($('pipeline-file').files[0]!==file||$('pipeline-resource').value!==resource)return;
+ const preview=$('pipeline-preview');
+ if(!result.valid){$('pipeline-status').textContent=result.error_count+' invalid records. Nothing imported.';for(const error of result.errors)preview.append(cell('p','Row '+error.row+': '+error.code));return;}
+ preparedBatch={batch_id:result.batch_id,digest:result.digest,source};
+ $('pipeline-status').textContent=result.row_count+' valid records · '+result.would_insert+' proposed inserts · '+result.duplicates+' exact duplicates. Preview expires '+new Date(result.expires_at*1000).toLocaleString()+'.';
+ preview.append(cell('p','Normalized preview: '+result.normalized_rows.length+' records. Expand each row to review before importing.'));
+ for(const [index,row] of result.normalized_rows.entries()){const details=document.createElement('details');details.append(cell('summary','Row '+(index+1)),cell('pre',JSON.stringify(row,null,2)));preview.append(details);}
+ }catch(error){$('pipeline-status').textContent=error instanceof SyntaxError?'Invalid JSON file. Nothing imported.':error.message;}
+ finally{button.disabled=false;}
+};
+$('pipeline-commit').onclick=async()=>{
+ if(!preparedBatch||!$('pipeline-confirm').checked)return;const batch=preparedBatch;$('pipeline-commit').disabled=true;
+ try{const result=await api('pipeline/commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(batch)});resetPipeline();$('pipeline-file').value='';$('pipeline-status').textContent='Batch complete: '+result.inserted+' inserted, '+result.skipped+' exact duplicates skipped'+(result.replayed?' (previous result replayed)':'')+'.';if(!current)await dashboard();}
+ catch(error){$('pipeline-status').textContent=error.message;$('pipeline-commit').disabled=false;}
+};
+async function exportPipelinePage(after){
+ const resource=$('pipeline-resource').value,format=$('pipeline-export-format').value;
+ try{const result=await api('pipeline/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resource,format,after_id:after,limit:200})});
+ if($('pipeline-resource').value!==resource)return;
+ const content=format==='csv'?result.csv:JSON.stringify(result,null,2);const blob=new Blob([content],{type:format==='csv'?'text/csv;charset=utf-8':'application/json'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=resource+'-after-'+after+'.'+format;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ exportCursor=result.next_after_id;$('pipeline-export-next').disabled=!result.has_more;$('pipeline-status').textContent='Exported '+result.rows.length+' authorized records.'+(result.has_more?' More records are available; export the next page.':' End of export.');
+ }catch(error){$('pipeline-status').textContent=error.message;}
+}
+$('pipeline-export').onclick=()=>exportPipelinePage(0);
+$('pipeline-export-next').onclick=()=>{if(exportCursor!==null)exportPipelinePage(exportCursor);};
+$('pipeline-jobs').onclick=async()=>{
+ try{const jobs=await api('pipeline/batches?limit=50');const list=$('pipeline-job-list');list.replaceChildren();for(const job of jobs)list.append(cell('p',modules[job.resource].title+' · '+job.status+' · '+job.row_count+' rows · '+job.inserted+' inserted · '+job.skipped+' skipped · '+new Date(job.created_at*1000).toLocaleString()));if(!jobs.length)list.append(cell('p','No import batches yet.'));}catch(error){$('pipeline-status').textContent=error.message;}
+};

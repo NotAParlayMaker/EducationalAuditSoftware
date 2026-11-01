@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 CODES = frozenset({'account_created','account_disabled','password_reset','login_succeeded',
     'login_failed','login_throttled','session_revoked','sessions_revoked','session_evicted',
-    'password_changed','password_change_failed','password_change_throttled'})
+    'password_changed','password_change_failed','password_change_throttled',
+    'import_preview','import_committed','export_completed'})
 ZERO = '0' * 64
 
 

@@ -12,5 +12,5 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Check Python and JavaScript syntax
         run: |
-          python3 -m compileall -q app.py assistant.py audit_workflow.py security.py accounts.py manage.py operations.py maintenance.py security_events.py runtime.py schooldesk.py tests
+          python3 -m compileall -q app.py assistant.py audit_workflow.py security.py accounts.py manage.py operations.py maintenance.py security_events.py runtime.py schooldesk.py data_pipeline.py tests
           node --check static/app.js
