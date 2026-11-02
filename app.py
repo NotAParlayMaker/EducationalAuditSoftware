@@ -11,6 +11,7 @@ import data_pipeline
 import mfa
 import deployment
 import evidence_scan
+import learning
 import time
 from urllib.parse import urlsplit, parse_qs
 import hashlib
@@ -106,6 +107,7 @@ CHOICES = {
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     db = sqlite3.connect(DB)
+    db.execute('PRAGMA foreign_keys=ON')
     if os.name == 'posix':
         DB.chmod(0o640 if deployment.cloud() else 0o600)
     db.row_factory = sqlite3.Row
@@ -123,6 +125,7 @@ def initialize():
             db.execute(f'CREATE TABLE IF NOT EXISTS {name} (id INTEGER PRIMARY KEY, {columns})')
         audits.migrate(db)
         accounts.initialize(db)
+        learning.initialize(db)
         if (events.signing_key() or db.execute("SELECT 1 FROM security_events WHERE event_mac<>'' LIMIT 1").fetchone()) and not events.verify(db)['valid']:
             raise ValueError('Signed event history cannot be verified. Restore the correct external key, or explicitly seal a reviewed legacy baseline with manage.py seal-events.')
         operations.initialize(db)
@@ -235,7 +238,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 # Static UI can load before workspace unlock, but host/origin checks still apply.
                 security.check_request(self,authenticate=False)
-                if self.path not in ('/', '/index.html', '/app.js', '/style.css'):
+                if self.path not in ('/', '/index.html', '/app.js', '/learning.js', '/style.css'):
                     return self.reply(404, {'error': 'Unknown resource'})
                 return super().do_GET()
             except OSError:
@@ -246,6 +249,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.reply(200, {'accounts_enabled': accounts.enabled(db),'demo_enabled':not deployment.cloud() and not accounts.enabled(db) and bool(getattr(self.server,'allow_demo',False))})
         if not self.guard():
             return
+        if self.path.startswith('/api/learning/'):
+            with connect() as db:result=learning.route(db,self.user,'GET',urlsplit(self.path).path,parse_qs(urlsplit(self.path).query,keep_blank_values=True,max_num_fields=6))
+            return self.reply(200,result)
         if self.path.split('?')[0]=='/api/pipeline/batches':
             if not self.user:raise security.RequestError(403,'Individual account sign-in is required.')
             query=parse_qs(urlsplit(self.path).query,max_num_fields=4);limit,offset=operations.page_query(query)
@@ -348,6 +354,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply(200, result)
         if not self.guard(write=True):
             return
+        if self.path.startswith('/api/learning/'):
+            data=security.read_json(self,maximum=32768)
+            with connect() as db:result=learning.route(db,self.user,'POST',urlsplit(self.path).path,parse_qs(urlsplit(self.path).query,keep_blank_values=True,max_num_fields=6),data)
+            return self.reply(200,result)
         if self.path in ('/api/auth/reauthenticate','/api/auth/mfa/begin','/api/auth/mfa/confirm'):
             data=security.read_json(self)
             with connect() as db:

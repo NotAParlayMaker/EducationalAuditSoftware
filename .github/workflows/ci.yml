@@ -16,5 +16,6 @@ jobs:
         run: .ci-venv/bin/python -m unittest discover -s tests -v
       - name: Check Python and JavaScript syntax
         run: |
-          .ci-venv/bin/python -m compileall -q app.py assistant.py audit_workflow.py security.py accounts.py manage.py operations.py maintenance.py security_events.py runtime.py schooldesk.py data_pipeline.py integrity_anchor.py mfa.py evidence_scan.py secret_config.py deployment.py secure_backup.py security_feed.py durable_files.py deploy tests
+          .ci-venv/bin/python -m compileall -q app.py assistant.py audit_workflow.py learning.py security.py accounts.py manage.py operations.py maintenance.py security_events.py runtime.py schooldesk.py data_pipeline.py integrity_anchor.py mfa.py evidence_scan.py secret_config.py deployment.py secure_backup.py security_feed.py durable_files.py deploy tests
           node --check static/app.js
+          node --check static/learning.js

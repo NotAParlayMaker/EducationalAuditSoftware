@@ -28,7 +28,7 @@ def main(argv=None):
                 password=getpass.getpass('Administrator password (14–256 characters): ')
                 if password!=getpass.getpass('Confirm password: '):raise ValueError('Passwords differ.')
                 accounts.create_user(db,args.username,'administrator',password)
-            print('IT administrator created. Add a registrar for student records, plus auditor, remediation_owner, and reviewer accounts with manage.py, then run schooldesk.py doctor.')
+            print('IT administrator created. Add a registrar for student records, teachers for assigned classes, plus auditor, remediation_owner, and reviewer accounts with manage.py, then run schooldesk.py doctor.')
         elif args.command=='doctor':
             maintenance.verify(app.DB)
             with app.connect() as db:result=runtime.status(db)

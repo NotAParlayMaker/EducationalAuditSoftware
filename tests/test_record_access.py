@@ -110,6 +110,9 @@ class ExplicitDemoHTTPTest(unittest.TestCase):
                 with self.assertRaises(HTTPError) as missing:urlopen(base+'/api/audits')
                 self.assertEqual(missing.exception.code,401);missing.exception.close()
                 with urlopen(Request(base+'/api/audits',headers={'Authorization':'Bearer '+server.demo_token})) as response:self.assertEqual(json.load(response),[])
+                with self.assertRaises(HTTPError) as learning_denied:
+                    urlopen(Request(base+'/api/learning/classes',headers={'Authorization':'Bearer '+server.demo_token}))
+                self.assertEqual(learning_denied.exception.code,403);learning_denied.exception.close()
                 with urlopen(base+'/api/auth/status') as response:self.assertTrue(json.load(response)['demo_enabled'])
             finally:server.shutdown();server.server_close();thread.join()
 
